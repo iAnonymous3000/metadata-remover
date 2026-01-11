@@ -4,7 +4,10 @@ version = "0.1.0"
 edition = "2021"
 description = "Privacy-focused metadata removal for files"
 license = "MIT"
-repository = "https://github.com/user/metadata-remover"
+repository = "https://github.com/iAnonymous3000/metadata-remover"
+
+[package.metadata.wasm-pack.profile.release]
+wasm-opt = false
 
 [lib]
 crate-type = ["cdylib", "rlib"]
