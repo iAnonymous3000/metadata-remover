@@ -36,9 +36,11 @@ jobs:
 
       - name: Prepare dist
         run: |
-          mkdir -p dist
-          cp -r web/* dist/
-          cp -r wasm/pkg dist/wasm
+          mkdir -p dist/wasm
+          cp web/index.html dist/
+          cp -r web/css dist/
+          cp -r web/js dist/
+          cp wasm/pkg/* dist/wasm/
 
       - name: Upload artifact
         uses: actions/upload-pages-artifact@v3
