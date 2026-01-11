@@ -1,0 +1,13 @@
+{
+  "name": "metadata-remover",
+  "version": "1.0.0",
+  "description": "Privacy-focused metadata removal using WebAssembly",
+  "private": true,
+  "scripts": {
+    "build": "cd wasm && wasm-pack build --target web --release",
+    "serve": "npx serve web -p 3000",
+    "dev": "npm run build && npm run serve"
+  },
+  "keywords": ["privacy", "metadata", "exif", "wasm"],
+  "license": "MIT"
+}
