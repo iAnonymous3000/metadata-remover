@@ -1,6 +1,5 @@
 // Determine base path for GitHub Pages compatibility
-const BASE_PATH = document.currentScript?.src.replace(/js\/app\.js$/, '') || './';
-const WASM_PATH = `${BASE_PATH}wasm/metadata_remover.js`;
+const WASM_PATH = new URL('../wasm/metadata_remover.js', import.meta.url).href;
 
 let wasmReady = false;
 let wasmModule = null;
