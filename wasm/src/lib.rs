@@ -1,9 +1,9 @@
-use wasm_bindgen::prelude::*;
 use serde::{Deserialize, Serialize};
+use wasm_bindgen::prelude::*;
 
 mod jpeg;
-mod png;
 mod pdf;
+mod png;
 
 // Magic bytes for file type detection
 const JPEG_MAGIC: [u8; 3] = [0xFF, 0xD8, 0xFF];
@@ -26,15 +26,11 @@ pub struct MetadataEntry {
 
 #[wasm_bindgen]
 pub fn detect_file_type(data: &[u8]) -> String {
-    if data.len() < 8 {
-        return "unknown".into();
-    }
-
-    if data[..3] == JPEG_MAGIC {
+    if data.len() >= JPEG_MAGIC.len() && data[..JPEG_MAGIC.len()] == JPEG_MAGIC {
         "jpeg".into()
-    } else if data[..8] == PNG_MAGIC {
+    } else if data.len() >= PNG_MAGIC.len() && data[..PNG_MAGIC.len()] == PNG_MAGIC {
         "png".into()
-    } else if data[..4] == PDF_MAGIC {
+    } else if data.len() >= PDF_MAGIC.len() && data[..PDF_MAGIC.len()] == PDF_MAGIC {
         "pdf".into()
     } else {
         "unknown".into()

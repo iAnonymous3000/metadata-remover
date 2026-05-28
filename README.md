@@ -4,18 +4,19 @@ Privacy-focused metadata removal tool that runs entirely in your browser using W
 
 ## Features
 
-- **JPEG** - Removes EXIF (camera, GPS, timestamps), XMP, IPTC, ICC profiles, comments
-- **PNG** - Removes tEXt, zTXt, iTXt, eXIf, tIME, iCCP, and other ancillary chunks
-- **PDF** - Removes author, creator, dates, XMP metadata, document IDs
+- **JPEG** - Removes JFIF/APP metadata, EXIF (camera, GPS, timestamps), XMP, IPTC, comments, and trailing appended data while preserving orientation and color rendering
+- **PNG** - Removes text, EXIF, timestamps, physical-resolution metadata, and unknown ancillary chunks while preserving transparency and color rendering
+- **PDF** - Removes info dictionaries, XMP metadata streams, document IDs, app-specific metadata, and embedded file attachments
+- **Verification** - Re-scans cleaned output before download and flags any remaining removable metadata
 
 ## How It Works
 
 1. Drop files into the browser
 2. View detected metadata before cleaning
 3. Click "Remove All Metadata" to process
-4. Download cleaned files
+4. Download individual cleaned files or a ZIP containing the full cleaned batch
 
-All processing happens client-side via WebAssembly (~290KB). Files exist only in browser memory and are never transmitted anywhere.
+All processing happens client-side via WebAssembly in a browser worker. Files exist only in browser memory and are never transmitted anywhere.
 
 ## Deploy Your Own
 
@@ -32,10 +33,10 @@ All processing happens client-side via WebAssembly (~290KB). Files exist only in
 # Prerequisites: Rust, wasm-pack, Node.js
 
 # Build WASM
-cd wasm && wasm-pack build --target web --release && cd ..
+npm run build
 
 # Serve locally
-npx serve web -p 3000
+npm run serve
 ```
 
 ## Project Structure
@@ -61,23 +62,31 @@ metadata-remover/
 
 - **Rust** compiled to WASM for native-speed binary parsing
 - **Zero dependencies** frontend (vanilla JS)
-- **Streaming-friendly** architecture (processes files sequentially)
-- Optimized WASM binary (~290KB with `opt-level=z`, LTO, panic=abort)
+- Worker-based processing keeps parsing and cleaning off the main UI thread
+- Per-file size limit prevents accidental browser memory exhaustion
+- CSP limits scripts, workers, network fetches, forms, and embedded objects to the local app origin
+- Optimized WASM binary (~340KB with `opt-level=z`, LTO, panic=abort)
 
 ## Supported Metadata Types
 
 | Format | Removed |
 |--------|---------|
-| JPEG | EXIF, XMP, IPTC, ICC Profile, Adobe, Ducky, Comments |
-| PNG | tEXt, zTXt, iTXt, eXIf, tIME, iCCP, sRGB, gAMA, cHRM, pHYs |
-| PDF | Info dictionary, XMP metadata stream, Document ID |
+| JPEG | APP/JFIF segments, EXIF except minimal orientation, XMP, IPTC, Ducky, Comments, trailing appended data |
+| PNG | tEXt, zTXt, iTXt, eXIf, tIME, pHYs, unknown ancillary chunks |
+| PDF | Info dictionary, XMP metadata streams, Document ID, PieceInfo, MarkInfo, embedded file attachments |
 
 ## Privacy
 
 - 100% client-side processing
 - No analytics, tracking, or network requests
-- Works offline after initial load
+- Works offline after initial load through a service worker cache
+- Installable as a standalone web app where browser PWA support is available
 - Open source (audit the code yourself)
+
+## Limitations
+
+- JPEG orientation and color-transform/profile segments are preserved to avoid sideways images and color shifts.
+- This tool removes structural metadata; it does not detect steganographic content embedded in pixels or document bodies.
 
 ## License
 

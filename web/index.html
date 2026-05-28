@@ -3,7 +3,11 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self' 'wasm-unsafe-eval'; worker-src 'self'; connect-src 'self'; style-src 'self'; img-src 'self' data:; manifest-src 'self'; object-src 'none'; base-uri 'none'; form-action 'none'">
+    <meta name="theme-color" content="#0d1117">
     <title>Metadata Remover - Privacy-First File Cleaning</title>
+    <link rel="manifest" href="manifest.webmanifest">
+    <link rel="icon" href="icon.svg" type="image/svg+xml">
     <link rel="stylesheet" href="css/style.css">
 </head>
 <body>
@@ -14,7 +18,7 @@
         </header>
 
         <main>
-            <div id="drop-zone" class="drop-zone">
+            <div id="drop-zone" class="drop-zone" role="button" tabindex="0" aria-describedby="supported-formats">
                 <div class="drop-zone-content">
                     <svg class="icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
                         <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/>
@@ -22,15 +26,16 @@
                         <line x1="12" y1="3" x2="12" y2="15"/>
                     </svg>
                     <p>Drop files here or <label for="file-input" class="file-label">browse</label></p>
-                    <p class="supported">Supports: JPEG, PNG, PDF</p>
+                    <p id="supported-formats" class="supported">Supports: JPEG, PNG, PDF</p>
                     <input type="file" id="file-input" multiple accept=".jpg,.jpeg,.png,.pdf,image/jpeg,image/png,application/pdf">
                 </div>
             </div>
 
-            <div id="file-list" class="file-list"></div>
+            <div id="file-list" class="file-list" aria-live="polite"></div>
 
             <div id="actions" class="actions hidden">
                 <button id="process-btn" class="btn btn-primary">Remove All Metadata</button>
+                <button id="download-all-btn" class="btn btn-secondary" disabled>Download All</button>
                 <button id="clear-btn" class="btn btn-secondary">Clear All</button>
             </div>
         </main>
@@ -46,11 +51,11 @@
         </footer>
     </div>
 
-    <div id="modal" class="modal hidden">
+    <div id="modal" class="modal hidden" role="dialog" aria-modal="true" aria-labelledby="modal-title">
         <div class="modal-content">
             <div class="modal-header">
-                <h2>Metadata Details</h2>
-                <button class="modal-close">&times;</button>
+                <h2 id="modal-title">Metadata Details</h2>
+                <button class="modal-close" aria-label="Close metadata details">&times;</button>
             </div>
             <div class="modal-body" id="modal-body"></div>
         </div>

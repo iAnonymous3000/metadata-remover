@@ -3,9 +3,14 @@
   "version": "1.0.0",
   "description": "Privacy-focused metadata removal using WebAssembly",
   "private": true,
+  "type": "module",
   "scripts": {
-    "build": "cd wasm && wasm-pack build --target web --release",
-    "serve": "npx serve web -p 3000",
+    "build": "npm run build:wasm && npm run copy:wasm",
+    "build:wasm": "cd wasm && wasm-pack build --target web --release",
+    "copy:wasm": "rm -rf web/wasm && mkdir -p web/wasm && cp wasm/pkg/metadata_remover.js wasm/pkg/metadata_remover_bg.wasm web/wasm/",
+    "dist": "npm run build && rm -rf dist && mkdir -p dist && cp -R web/. dist/",
+    "serve": "npx --yes serve web -p 3000",
+    "serve:dist": "npx --yes serve dist -p 3000",
     "dev": "npm run build && npm run serve"
   },
   "keywords": ["privacy", "metadata", "exif", "wasm"],

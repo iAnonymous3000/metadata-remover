@@ -1,9 +1,10 @@
 # Rust / Cargo
 /wasm/target/
-/wasm/Cargo.lock
 
 # WASM build output (rebuilt on deploy)
 /wasm/pkg/
+/web/wasm/
+/dist/
 
 # Node
 node_modules/

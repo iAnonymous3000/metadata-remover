@@ -17,6 +17,8 @@ concurrency:
 jobs:
   build:
     runs-on: ubuntu-latest
+    env:
+      WASM_PACK_VERSION: 0.14.0
     steps:
       - uses: actions/checkout@v4
 
@@ -24,23 +26,21 @@ jobs:
         uses: dtolnay/rust-toolchain@stable
         with:
           targets: wasm32-unknown-unknown
+          components: clippy
 
-      - name: Install wasm-pack and binaryen
-        run: |
-          curl https://rustwasm.github.io/wasm-pack/installer/init.sh -sSf | sh
-          sudo apt-get update && sudo apt-get install -y binaryen
+      - name: Install wasm-pack
+        run: cargo install wasm-pack --version "$WASM_PACK_VERSION" --locked
 
-      - name: Build WASM
+      - name: Test Rust
         working-directory: ./wasm
-        run: wasm-pack build --target web --release
+        run: cargo test --locked
 
-      - name: Prepare dist
-        run: |
-          mkdir -p dist/wasm
-          cp web/index.html dist/
-          cp -r web/css dist/
-          cp -r web/js dist/
-          cp wasm/pkg/* dist/wasm/
+      - name: Lint Rust
+        working-directory: ./wasm
+        run: cargo clippy --locked --all-targets -- -D warnings
+
+      - name: Build site
+        run: npm run dist
 
       - name: Upload artifact
         uses: actions/upload-pages-artifact@v3
