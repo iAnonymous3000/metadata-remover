@@ -14,13 +14,13 @@
     <div class="container">
         <header>
             <h1>Metadata Remover</h1>
-            <p class="tagline">Remove metadata from files entirely in your browser. No uploads. No servers. Complete privacy.</p>
+            <p class="tagline">Remove metadata from files entirely in your browser. No uploads, no servers, and no file data leaves your device.</p>
         </header>
 
         <main>
-            <div id="drop-zone" class="drop-zone" role="button" tabindex="0" aria-describedby="supported-formats">
+            <div id="drop-zone" class="drop-zone" role="button" tabindex="0" aria-label="Drop files here or browse" aria-describedby="supported-formats">
                 <div class="drop-zone-content">
-                    <svg class="icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                    <svg class="icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true">
                         <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/>
                         <polyline points="17 8 12 3 7 8"/>
                         <line x1="12" y1="3" x2="12" y2="15"/>
@@ -31,6 +31,38 @@
                 </div>
             </div>
             <div id="drop-feedback" class="drop-feedback" role="status" aria-live="polite"></div>
+
+            <section class="trust-points" aria-label="Privacy and processing details">
+                <div class="trust-point">
+                    <svg class="icon-small" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true">
+                        <rect x="3" y="11" width="18" height="11" rx="2" ry="2"/>
+                        <path d="M7 11V7a5 5 0 0 1 10 0v4"/>
+                    </svg>
+                    <div>
+                        <h2>Files stay on your device</h2>
+                        <p>No uploads, accounts, analytics, or server-side processing.</p>
+                    </div>
+                </div>
+                <div class="trust-point">
+                    <svg class="icon-small" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true">
+                        <path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z"/>
+                    </svg>
+                    <div>
+                        <h2>Built with Rust</h2>
+                        <p>Rust keeps the cleaning engine fast and memory safe while it handles untrusted files.</p>
+                    </div>
+                </div>
+                <div class="trust-point">
+                    <svg class="icon-small" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true">
+                        <polyline points="16 18 22 12 16 6"/>
+                        <polyline points="8 6 2 12 8 18"/>
+                    </svg>
+                    <div>
+                        <h2>Powered by WebAssembly</h2>
+                        <p>WebAssembly lets the Rust engine run inside your browser, so parsing stays fast without uploads.</p>
+                    </div>
+                </div>
+            </section>
 
             <div id="file-list" class="file-list" aria-live="polite"></div>
 
@@ -43,11 +75,11 @@
 
         <footer>
             <div class="privacy-note">
-                <svg class="icon-small" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                <svg class="icon-small" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true">
                     <rect x="3" y="11" width="18" height="11" rx="2" ry="2"/>
                     <path d="M7 11V7a5 5 0 0 1 10 0v4"/>
                 </svg>
-                <span>Files are processed locally using WebAssembly. Nothing leaves your device.</span>
+                <span>Built with Rust and WebAssembly; your files are cleaned on this device, inside your browser.</span>
             </div>
         </footer>
     </div>

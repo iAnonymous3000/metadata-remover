@@ -241,6 +241,37 @@ pub fn remove_metadata(data: &[u8]) -> Result<Vec<u8>, String> {
     Ok(result)
 }
 
+pub fn validate(data: &[u8]) -> Result<(), String> {
+    if data.len() < 8 || data[0..8] != PNG_SIGNATURE {
+        return Err("Not a valid PNG file".to_string());
+    }
+
+    let mut offset = 8;
+    let mut saw_iend = false;
+
+    while offset + 12 <= data.len() {
+        let length = read_u32_be(data, offset) as usize;
+        let chunk_type = &data[offset + 4..offset + 8];
+
+        let Some(chunk_end) = checked_chunk_end(offset, length, data.len()) else {
+            return Err("Invalid chunk length".to_string());
+        };
+
+        offset = chunk_end;
+
+        if chunk_type == b"IEND" {
+            saw_iend = true;
+            break;
+        }
+    }
+
+    if !saw_iend {
+        return Err("PNG missing IEND chunk".to_string());
+    }
+
+    Ok(())
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

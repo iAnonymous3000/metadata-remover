@@ -74,6 +74,22 @@ pub fn extract_metadata(data: &[u8]) -> JsValue {
 }
 
 #[wasm_bindgen]
+pub fn validate_file(data: &[u8]) -> Result<(), JsValue> {
+    let file_type = detect_file_type(data);
+
+    let result = match file_type.as_str() {
+        "jpeg" => jpeg::validate(data),
+        "png" => png::validate(data),
+        "pdf" => pdf::validate(data),
+        "webp" => webp::validate(data),
+        "gif" => gif::validate(data),
+        _ => Err("Unsupported file type".to_string()),
+    };
+
+    result.map_err(|error| JsValue::from_str(&error))
+}
+
+#[wasm_bindgen]
 pub fn remove_metadata(data: &[u8]) -> Result<js_sys::Uint8Array, JsValue> {
     let file_type = detect_file_type(data);
 

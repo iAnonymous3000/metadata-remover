@@ -48,6 +48,7 @@ async function handleMessage(message) {
             requestId: message.requestId,
             id: message.id,
             fatal,
+            fileType: e.fileType,
             error: errorToString(e)
         });
 
@@ -65,6 +66,12 @@ async function analyzeFile(message) {
 
     if (fileType === 'unknown') {
         throw new Error('Unsupported or invalid file type.');
+    }
+
+    try {
+        wasmModule.validate_file(data);
+    } catch (e) {
+        throw fileError(fileType, e);
     }
 
     const metadata = wasmModule.extract_metadata(data);
@@ -91,7 +98,14 @@ async function processFile(message) {
         throw new Error('File data is no longer available.');
     }
 
-    const cleaned = wasmModule.remove_metadata(data);
+    const fileType = wasmModule.detect_file_type(data);
+    let cleaned;
+    try {
+        cleaned = wasmModule.remove_metadata(data);
+    } catch (e) {
+        throw fileError(fileType, e);
+    }
+
     const verification = wasmModule.extract_metadata(cleaned);
     const cleanedBuffer = cleaned.buffer.slice(cleaned.byteOffset, cleaned.byteOffset + cleaned.byteLength);
 
@@ -109,6 +123,45 @@ function errorToString(error) {
         return error.message;
     }
     return String(error || 'Unknown error');
+}
+
+function friendlyFileError(fileType, error) {
+    const message = errorToString(error);
+    const lower = message.toLowerCase();
+    const typeLabel = fileTypeLabel(fileType);
+
+    if (
+        lower.includes('invalid segment length')
+        || lower.includes('invalid scan segment length')
+        || lower.includes('truncated')
+        || lower.includes('file too small')
+        || lower.includes('not a valid')
+    ) {
+        return `This file appears to be corrupt or is not a valid ${typeLabel}.`;
+    }
+
+    if (lower.includes('unsupported')) {
+        return 'This file type is not supported.';
+    }
+
+    return message;
+}
+
+function fileError(fileType, error) {
+    const friendly = new Error(friendlyFileError(fileType, error));
+    friendly.fileType = fileType;
+    return friendly;
+}
+
+function fileTypeLabel(fileType) {
+    const labels = {
+        jpeg: 'JPEG',
+        png: 'PNG',
+        webp: 'WebP',
+        gif: 'GIF',
+        pdf: 'PDF'
+    };
+    return labels[fileType] || 'file';
 }
 
 function isFatalWasmError(error) {

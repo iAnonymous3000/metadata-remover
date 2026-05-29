@@ -159,6 +159,22 @@ pub fn remove_metadata(data: &[u8]) -> Result<Vec<u8>, String> {
     Ok(result)
 }
 
+pub fn validate(data: &[u8]) -> Result<(), String> {
+    if data.len() < 12 || &data[0..4] != RIFF_MAGIC || &data[8..12] != WEBP_MAGIC {
+        return Err("Not a valid WebP file".to_string());
+    }
+
+    let mut offset = 12;
+    while offset + 8 <= data.len() {
+        let Some((_, _, padded_end)) = checked_chunk_bounds(offset, data) else {
+            break;
+        };
+        offset = padded_end;
+    }
+
+    Ok(())
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -278,6 +294,8 @@ mod tests {
     fn test_remove_metadata_strips_trailing_data_that_looks_like_chunk_header() {
         let mut input = webp(&[chunk(b"VP8 ", b"image")]);
         input.extend_from_slice(b"TRACKING");
+
+        assert!(validate(&input).is_ok());
 
         let cleaned = remove_metadata(&input).unwrap();
         let info = extract_metadata(&cleaned);

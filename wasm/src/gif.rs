@@ -302,6 +302,30 @@ pub fn remove_metadata(data: &[u8]) -> Result<Vec<u8>, String> {
     Ok(result)
 }
 
+pub fn validate(data: &[u8]) -> Result<(), String> {
+    let Some(mut offset) = logical_screen_end(data) else {
+        return Err("Not a valid GIF file".to_string());
+    };
+
+    while offset < data.len() {
+        match data[offset] {
+            IMAGE_SEPARATOR => {
+                offset = image_block_end(data, offset)
+                    .ok_or_else(|| "Invalid GIF image block".to_string())?;
+            }
+            EXTENSION_INTRODUCER => {
+                let (end, _) = extension_end(data, offset)
+                    .ok_or_else(|| "Invalid GIF extension block".to_string())?;
+                offset = end;
+            }
+            TRAILER => return Ok(()),
+            _ => return Err("Invalid GIF block".to_string()),
+        }
+    }
+
+    Ok(())
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

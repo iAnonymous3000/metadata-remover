@@ -82,6 +82,113 @@ fn read_tiff_u32(data: &[u8], offset: usize, big_endian: bool) -> Option<u32> {
     })
 }
 
+fn tiff_type_size(format: u16) -> Option<usize> {
+    match format {
+        1 | 2 | 6 | 7 => Some(1),
+        3 | 8 => Some(2),
+        4 | 9 | 11 => Some(4),
+        5 | 10 | 12 => Some(8),
+        _ => None,
+    }
+}
+
+fn tiff_value_range(
+    tiff_data: &[u8],
+    entry_offset: usize,
+    format: u16,
+    count: u32,
+    big_endian: bool,
+) -> Option<std::ops::Range<usize>> {
+    let data_size = (count as usize).checked_mul(tiff_type_size(format)?)?;
+    let value_offset = if data_size <= 4 {
+        entry_offset.checked_add(8)?
+    } else {
+        read_tiff_u32(tiff_data, entry_offset + 8, big_endian)? as usize
+    };
+    let end = value_offset.checked_add(data_size)?;
+    (end <= tiff_data.len()).then_some(value_offset..end)
+}
+
+fn read_tiff_rational(data: &[u8], offset: usize, big_endian: bool) -> Option<f64> {
+    let numerator = read_tiff_u32(data, offset, big_endian)? as f64;
+    let denominator = read_tiff_u32(data, offset + 4, big_endian)? as f64;
+    (denominator != 0.0).then_some(numerator / denominator)
+}
+
+fn parse_gps_ref(data: &[u8]) -> Option<char> {
+    data.iter()
+        .copied()
+        .find(|byte| byte.is_ascii_alphabetic())
+        .map(|byte| (byte as char).to_ascii_uppercase())
+}
+
+fn parse_gps_rationals(data: &[u8], big_endian: bool) -> Option<[f64; 3]> {
+    if data.len() < 24 {
+        return None;
+    }
+
+    Some([
+        read_tiff_rational(data, 0, big_endian)?,
+        read_tiff_rational(data, 8, big_endian)?,
+        read_tiff_rational(data, 16, big_endian)?,
+    ])
+}
+
+fn gps_decimal(parts: [f64; 3], reference: char) -> Option<f64> {
+    if !parts.iter().all(|value| value.is_finite()) {
+        return None;
+    }
+
+    let decimal = parts[0] + parts[1] / 60.0 + parts[2] / 3600.0;
+    match reference {
+        'N' | 'E' => Some(decimal),
+        'S' | 'W' => Some(-decimal),
+        _ => None,
+    }
+}
+
+fn parse_gps_ifd(tiff_data: &[u8], gps_ifd_offset: usize, big_endian: bool) -> Option<String> {
+    let entry_count = read_tiff_u16(tiff_data, gps_ifd_offset, big_endian)? as usize;
+    let mut lat_ref = None;
+    let mut lat_parts = None;
+    let mut lon_ref = None;
+    let mut lon_parts = None;
+
+    for i in 0..entry_count {
+        let entry_offset = gps_ifd_offset
+            .checked_add(2)?
+            .checked_add(i.checked_mul(12)?)?;
+        if entry_offset.checked_add(12)? > tiff_data.len() {
+            return None;
+        }
+
+        let tag = read_tiff_u16(tiff_data, entry_offset, big_endian)?;
+        let format = read_tiff_u16(tiff_data, entry_offset + 2, big_endian)?;
+        let count = read_tiff_u32(tiff_data, entry_offset + 4, big_endian)?;
+        let Some(range) = tiff_value_range(tiff_data, entry_offset, format, count, big_endian)
+        else {
+            continue;
+        };
+        let value_data = &tiff_data[range];
+
+        match tag {
+            0x0001 if format == 2 => lat_ref = parse_gps_ref(value_data),
+            0x0002 if format == 5 && count == 3 => {
+                lat_parts = parse_gps_rationals(value_data, big_endian)
+            }
+            0x0003 if format == 2 => lon_ref = parse_gps_ref(value_data),
+            0x0004 if format == 5 && count == 3 => {
+                lon_parts = parse_gps_rationals(value_data, big_endian)
+            }
+            _ => {}
+        }
+    }
+
+    let latitude = gps_decimal(lat_parts?, lat_ref?)?;
+    let longitude = gps_decimal(lon_parts?, lon_ref?)?;
+    Some(format!("{latitude:.6}, {longitude:.6}"))
+}
+
 fn extract_orientation_from_exif(exif_data: &[u8]) -> Option<u16> {
     if !exif_data.starts_with(b"Exif\0\0") || exif_data.len() < 14 {
         return None;
@@ -305,39 +412,24 @@ fn parse_exif_entries(exif_data: &[u8], entries: &mut Vec<MetadataEntry>) {
         _ => return,
     };
 
-    let read_u16 = |data: &[u8], off: usize| -> u16 {
-        if big_endian {
-            ((data[off] as u16) << 8) | (data[off + 1] as u16)
-        } else {
-            ((data[off + 1] as u16) << 8) | (data[off] as u16)
-        }
-    };
-
-    let read_u32 = |data: &[u8], off: usize| -> u32 {
-        if big_endian {
-            ((data[off] as u32) << 24)
-                | ((data[off + 1] as u32) << 16)
-                | ((data[off + 2] as u32) << 8)
-                | (data[off + 3] as u32)
-        } else {
-            ((data[off + 3] as u32) << 24)
-                | ((data[off + 2] as u32) << 16)
-                | ((data[off + 1] as u32) << 8)
-                | (data[off] as u32)
-        }
-    };
-
     // Get IFD0 offset
     if tiff_data.len() < 8 {
         return;
     }
-    let ifd_offset = read_u32(tiff_data, 4) as usize;
+    let Some(ifd_offset) = read_tiff_u32(tiff_data, 4, big_endian).map(|value| value as usize)
+    else {
+        return;
+    };
 
     if ifd_offset + 2 > tiff_data.len() {
         return;
     }
 
-    let entry_count = read_u16(tiff_data, ifd_offset) as usize;
+    let Some(entry_count) =
+        read_tiff_u16(tiff_data, ifd_offset, big_endian).map(|value| value as usize)
+    else {
+        return;
+    };
 
     for i in 0..entry_count {
         let Some(entry_offset) = ifd_offset
@@ -350,9 +442,33 @@ fn parse_exif_entries(exif_data: &[u8], entries: &mut Vec<MetadataEntry>) {
             break;
         }
 
-        let tag = read_u16(tiff_data, entry_offset);
-        let format = read_u16(tiff_data, entry_offset + 2);
-        let count = read_u32(tiff_data, entry_offset + 4) as usize;
+        let Some(tag) = read_tiff_u16(tiff_data, entry_offset, big_endian) else {
+            continue;
+        };
+        let Some(format) = read_tiff_u16(tiff_data, entry_offset + 2, big_endian) else {
+            continue;
+        };
+        let Some(count) = read_tiff_u32(tiff_data, entry_offset + 4, big_endian) else {
+            continue;
+        };
+
+        if tag == 0x8825 {
+            let value = if format == 4 && count == 1 {
+                let gps_ifd_offset =
+                    read_tiff_u32(tiff_data, entry_offset + 8, big_endian).unwrap_or(0) as usize;
+                parse_gps_ifd(tiff_data, gps_ifd_offset, big_endian)
+                    .unwrap_or_else(|| "Present in EXIF metadata".to_string())
+            } else {
+                "Present in EXIF metadata".to_string()
+            };
+
+            entries.push(MetadataEntry {
+                category: "Location".to_string(),
+                name: "GPS / Location data".to_string(),
+                value,
+            });
+            continue;
+        }
 
         let tag_name = match tag {
             0x010F => "Camera Make",
@@ -364,37 +480,16 @@ fn parse_exif_entries(exif_data: &[u8], entries: &mut Vec<MetadataEntry>) {
             0x013B => "Artist",
             0x8298 => "Copyright",
             0x8769 => "EXIF IFD",
-            0x8825 => "GPS IFD",
             _ => continue,
         };
 
-        // Type sizes: 1=byte, 2=ascii, 3=short, 4=long, 5=rational
-        let type_size = match format {
-            1 | 2 | 6 | 7 => 1,
-            3 | 8 => 2,
-            4 | 9 | 11 => 4,
-            5 | 10 | 12 => 8,
-            _ => continue,
-        };
-
-        let Some(data_size) = count.checked_mul(type_size) else {
+        let Some(value_range) =
+            tiff_value_range(tiff_data, entry_offset, format, count, big_endian)
+        else {
             continue;
         };
-        let value_offset = if data_size <= 4 {
-            entry_offset + 8
-        } else {
-            read_u32(tiff_data, entry_offset + 8) as usize
-        };
 
-        if value_offset
-            .checked_add(data_size)
-            .filter(|end| *end <= tiff_data.len())
-            .is_none()
-        {
-            continue;
-        }
-
-        let value_data = &tiff_data[value_offset..value_offset + data_size];
+        let value_data = &tiff_data[value_range];
 
         let value = if format == 2 {
             // ASCII string
@@ -402,7 +497,7 @@ fn parse_exif_entries(exif_data: &[u8], entries: &mut Vec<MetadataEntry>) {
                 .trim_end_matches('\0')
                 .to_string()
         } else {
-            format!("[{} bytes]", data_size)
+            format!("[{} bytes]", value_data.len())
         };
 
         if !value.is_empty() && value != "[0 bytes]" {
@@ -453,6 +548,56 @@ fn copy_scan_segment(
 
     result.extend_from_slice(&data[scan_start..]);
     Ok((data.len(), true))
+}
+
+pub fn validate(data: &[u8]) -> Result<(), String> {
+    if data.len() < 4 {
+        return Err("File too small".to_string());
+    }
+
+    if data[0] != MARKER_PREFIX || data[1] != SOI {
+        return Err("Not a valid JPEG file".to_string());
+    }
+
+    let mut offset = 2;
+    while offset + 2 <= data.len() {
+        if data[offset] != MARKER_PREFIX {
+            offset += 1;
+            continue;
+        }
+
+        let marker = data[offset + 1];
+        if marker == MARKER_PREFIX {
+            offset += 1;
+            continue;
+        }
+
+        if marker == EOI {
+            return Ok(());
+        }
+
+        if is_standalone_marker(marker) {
+            offset += 2;
+            continue;
+        }
+
+        if offset + 4 > data.len() {
+            return Err("Truncated JPEG segment".to_string());
+        }
+
+        let length = read_u16_be(data, offset + 2) as usize;
+        if length < 2 || offset + 2 + length > data.len() {
+            return Err("Invalid segment length".to_string());
+        }
+
+        if marker == SOS {
+            return Ok(());
+        }
+
+        offset += 2 + length;
+    }
+
+    Ok(())
 }
 
 pub fn remove_metadata(data: &[u8]) -> Result<Vec<u8>, String> {
@@ -588,6 +733,87 @@ mod tests {
         assert!(is_metadata_marker(APP0));
         assert!(is_metadata_marker(COM));
         assert!(!is_metadata_marker(SOI));
+    }
+
+    fn push_ifd_entry(out: &mut Vec<u8>, tag: u16, format: u16, count: u32, value: [u8; 4]) {
+        out.extend_from_slice(&tag.to_be_bytes());
+        out.extend_from_slice(&format.to_be_bytes());
+        out.extend_from_slice(&count.to_be_bytes());
+        out.extend_from_slice(&value);
+    }
+
+    fn rational(numerator: u32, denominator: u32) -> [u8; 8] {
+        let mut out = [0; 8];
+        out[..4].copy_from_slice(&numerator.to_be_bytes());
+        out[4..].copy_from_slice(&denominator.to_be_bytes());
+        out
+    }
+
+    fn build_gps_exif() -> Vec<u8> {
+        let gps_ifd_offset = 26u32;
+        let lat_values_offset = 80u32;
+        let lon_values_offset = 104u32;
+
+        let mut tiff = Vec::new();
+        tiff.extend_from_slice(b"MM");
+        tiff.extend_from_slice(&42u16.to_be_bytes());
+        tiff.extend_from_slice(&8u32.to_be_bytes());
+
+        tiff.extend_from_slice(&1u16.to_be_bytes());
+        push_ifd_entry(&mut tiff, 0x8825, 4, 1, gps_ifd_offset.to_be_bytes());
+        tiff.extend_from_slice(&0u32.to_be_bytes());
+
+        assert_eq!(tiff.len(), gps_ifd_offset as usize);
+        tiff.extend_from_slice(&4u16.to_be_bytes());
+        push_ifd_entry(&mut tiff, 0x0001, 2, 2, [b'N', 0, 0, 0]);
+        push_ifd_entry(&mut tiff, 0x0002, 5, 3, lat_values_offset.to_be_bytes());
+        push_ifd_entry(&mut tiff, 0x0003, 2, 2, [b'W', 0, 0, 0]);
+        push_ifd_entry(&mut tiff, 0x0004, 5, 3, lon_values_offset.to_be_bytes());
+        tiff.extend_from_slice(&0u32.to_be_bytes());
+
+        assert_eq!(tiff.len(), lat_values_offset as usize);
+        for value in [rational(37, 1), rational(46, 1), rational(741, 25)] {
+            tiff.extend_from_slice(&value);
+        }
+
+        assert_eq!(tiff.len(), lon_values_offset as usize);
+        for value in [rational(122, 1), rational(25, 1), rational(246, 25)] {
+            tiff.extend_from_slice(&value);
+        }
+
+        let mut exif = b"Exif\0\0".to_vec();
+        exif.extend_from_slice(&tiff);
+        exif
+    }
+
+    #[test]
+    fn test_extract_metadata_decodes_gps_location() {
+        let exif = build_gps_exif();
+        let mut data = vec![MARKER_PREFIX, SOI, MARKER_PREFIX, APP1];
+        data.extend_from_slice(&((exif.len() + 2) as u16).to_be_bytes());
+        data.extend_from_slice(&exif);
+        data.extend_from_slice(&[MARKER_PREFIX, EOI]);
+
+        let info = extract_metadata(&data);
+        let gps = info
+            .metadata_found
+            .iter()
+            .find(|entry| entry.name == "GPS / Location data")
+            .expect("GPS location entry should be present");
+
+        assert_eq!(gps.category, "Location");
+        assert_eq!(gps.value, "37.774900, -122.419400");
+        assert!(!info
+            .metadata_found
+            .iter()
+            .any(|entry| entry.name == "GPS IFD"));
+    }
+
+    #[test]
+    fn test_validate_rejects_invalid_segment_length() {
+        let data = vec![MARKER_PREFIX, SOI, MARKER_PREFIX, COM, 0, 20, b'x'];
+
+        assert_eq!(validate(&data), Err("Invalid segment length".to_string()));
     }
 
     #[test]

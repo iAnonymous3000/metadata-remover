@@ -268,6 +268,12 @@ pub fn remove_metadata(data: &[u8]) -> Result<Vec<u8>, String> {
     Ok(output)
 }
 
+pub fn validate(data: &[u8]) -> Result<(), String> {
+    Document::load_from(Cursor::new(data))
+        .map(|_| ())
+        .map_err(|e| format!("Failed to parse PDF: {}", e))
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

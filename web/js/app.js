@@ -151,6 +151,7 @@ function handleWorkerMessage(event) {
 
     if (message.type === 'failed') {
         const error = new Error(message.error || 'Processing failed');
+        error.fileType = message.fileType;
         reject(error);
         if (message.fatal) {
             restartWorker('The file processor recovered from a fatal file error. Re-add any failed file to try again.');
@@ -270,6 +271,9 @@ async function addFiles(newFiles) {
         } catch (e) {
             const current = files.get(id);
             if (!current) continue;
+            if (e.fileType && e.fileType !== 'unknown') {
+                current.type = e.fileType;
+            }
             current.status = 'error';
             current.errorMessage = e.message;
         }
@@ -310,20 +314,20 @@ function renderFileList() {
         item.innerHTML = `
             <div class="file-icon ${escapeHtml(typeLabel)}">${escapeHtml(typeLabel)}</div>
             <div class="file-info">
-                <div class="file-name">${escapeHtml(file.name)}</div>
+                <div class="file-name" title="${escapeAttribute(file.name)}">${escapeHtml(file.name)}</div>
                 <div class="file-meta">${metaText}</div>
             </div>
             <div class="file-status">${renderStatus(file.status)}</div>
             <div class="file-actions">
                 <button class="btn-icon" title="View metadata" aria-label="View metadata for ${escapeAttribute(file.name)}" data-action="view" data-id="${id}">
-                    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true">
                         <path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z"/>
                         <circle cx="12" cy="12" r="3"/>
                     </svg>
                 </button>
                 ${canDownload ? `
                 <button class="btn-icon" title="Download" aria-label="Download cleaned ${escapeAttribute(file.name)}" data-action="download" data-id="${id}">
-                    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true">
                         <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/>
                         <polyline points="7 10 12 15 17 10"/>
                         <line x1="12" y1="15" x2="12" y2="3"/>
@@ -331,7 +335,7 @@ function renderFileList() {
                 </button>
                 ` : ''}
                 <button class="btn-icon" title="Remove" aria-label="Remove ${escapeAttribute(file.name)} from the list" data-action="remove" data-id="${id}">
-                    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true">
                         <line x1="18" y1="6" x2="6" y2="18"/>
                         <line x1="6" y1="6" x2="18" y2="18"/>
                     </svg>
@@ -461,7 +465,10 @@ function showMetadata(id) {
     if (file.status === 'error') {
         modalBody.innerHTML = `<div class="no-metadata">${escapeHtml(file.errorMessage || 'Unable to process this file.')}</div>`;
     } else if (metadata.metadata_found.length === 0) {
-        modalBody.innerHTML = '<div class="no-metadata">No metadata found in this file.</div>';
+        modalBody.innerHTML = `
+            <div class="no-metadata">No removable metadata found in this file.</div>
+            ${renderPreservedMetadataNote(file.type || metadata.file_type)}
+        `;
     } else {
         const grouped = metadata.metadata_found.reduce((acc, entry) => {
             (acc[entry.category] ??= []).push(entry);
@@ -485,6 +492,8 @@ function showMetadata(id) {
             `;
         }
 
+        html += renderPreservedMetadataNote(file.type || metadata.file_type);
+
         html += `
             <div class="metadata-section">
                 <h3>Summary</h3>
@@ -503,6 +512,24 @@ function showMetadata(id) {
     modal.classList.remove('hidden');
     lastFocusedElement = document.activeElement;
     modalClose.focus();
+}
+
+function renderPreservedMetadataNote(fileType) {
+    const notes = {
+        jpeg: 'JPEG orientation and color-profile/color-transform data may be kept so photos do not rotate sideways or shift colors.',
+        png: 'PNG transparency and color-management chunks are kept so images render the same after cleaning.',
+        webp: 'WebP image, alpha, animation, and color-profile chunks are kept so the file still displays correctly.',
+        gif: 'GIF frames, transparency controls, plain-text image blocks, and animation loops are kept so animation and appearance are preserved.'
+    };
+
+    const note = notes[fileType];
+    if (!note) return '';
+
+    return `
+        <div class="metadata-note">
+            <strong>Kept for correct display:</strong> ${escapeHtml(note)}
+        </div>
+    `;
 }
 
 function closeModal() {
