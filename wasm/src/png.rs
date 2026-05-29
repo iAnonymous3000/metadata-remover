@@ -5,6 +5,7 @@ const PNG_SIGNATURE: [u8; 8] = [0x89, 0x50, 0x4E, 0x47, 0x0D, 0x0A, 0x1A, 0x0A];
 // Critical chunks and visual-state chunks that must be preserved.
 const CRITICAL_CHUNKS: [&[u8; 4]; 4] = [b"IHDR", b"PLTE", b"IDAT", b"IEND"];
 const VISUAL_CHUNKS: [&[u8; 4]; 5] = [b"tRNS", b"sRGB", b"gAMA", b"cHRM", b"iCCP"];
+const APNG_CHUNKS: [&[u8; 4]; 3] = [b"acTL", b"fcTL", b"fdAT"];
 
 fn read_u32_be(data: &[u8], offset: usize) -> u32 {
     ((data[offset] as u32) << 24)
@@ -20,7 +21,9 @@ fn is_critical_chunk(chunk_type: &[u8]) -> bool {
 }
 
 fn is_preserved_chunk(chunk_type: &[u8]) -> bool {
-    is_critical_chunk(chunk_type) || VISUAL_CHUNKS.iter().any(|chunk| chunk_type == *chunk)
+    is_critical_chunk(chunk_type)
+        || VISUAL_CHUNKS.iter().any(|chunk| chunk_type == *chunk)
+        || APNG_CHUNKS.iter().any(|chunk| chunk_type == *chunk)
 }
 
 fn is_ancillary_chunk(chunk_type: &[u8]) -> bool {
@@ -289,6 +292,28 @@ mod tests {
 
         assert!(cleaned.windows(4).any(|w| w == b"tRNS"));
         assert!(cleaned.windows(4).any(|w| w == b"sRGB"));
+        assert!(!cleaned.windows(4).any(|w| w == b"tEXt"));
+        assert!(!cleaned.windows(b"Secret".len()).any(|w| w == b"Secret"));
+    }
+
+    #[test]
+    fn test_remove_metadata_preserves_apng_animation_chunks() {
+        let mut png = PNG_SIGNATURE.to_vec();
+        png.extend_from_slice(&chunk(b"IHDR", &[0; 13]));
+        png.extend_from_slice(&chunk(b"acTL", &[0, 0, 0, 2, 0, 0, 0, 0]));
+        png.extend_from_slice(&chunk(b"fcTL", &[0; 26]));
+        png.extend_from_slice(&chunk(b"IDAT", &[1, 2, 3]));
+        png.extend_from_slice(&chunk(b"fdAT", &[0, 0, 0, 1, 4, 5, 6]));
+        png.extend_from_slice(&chunk(b"tEXt", b"Author\0Secret"));
+        png.extend_from_slice(&chunk(b"IEND", &[]));
+
+        let info = extract_metadata(&png);
+        let cleaned = remove_metadata(&png).unwrap();
+
+        assert_eq!(info.metadata_found.len(), 1);
+        assert!(cleaned.windows(4).any(|w| w == b"acTL"));
+        assert!(cleaned.windows(4).any(|w| w == b"fcTL"));
+        assert!(cleaned.windows(4).any(|w| w == b"fdAT"));
         assert!(!cleaned.windows(4).any(|w| w == b"tEXt"));
         assert!(!cleaned.windows(b"Secret".len()).any(|w| w == b"Secret"));
     }

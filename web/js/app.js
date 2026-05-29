@@ -9,6 +9,11 @@ let wasmReady = false;
 let requestId = 0;
 const files = new Map();
 const pendingRequests = new Map();
+let worker = null;
+let workerReadyPromise = Promise.resolve();
+let resolveWorkerReady = null;
+let rejectWorkerReady = null;
+let workerRestarting = false;
 
 // DOM Elements
 const dropZone = document.getElementById('drop-zone');
@@ -22,14 +27,73 @@ const clearBtn = document.getElementById('clear-btn');
 const modal = document.getElementById('modal');
 const modalBody = document.getElementById('modal-body');
 const modalClose = document.querySelector('.modal-close');
-const worker = new Worker(new URL('./worker.js', import.meta.url), { type: 'module' });
 let lastFocusedElement = null;
 
-worker.addEventListener('message', handleWorkerMessage);
-worker.addEventListener('error', (event) => {
-    console.error('Worker failed:', event.message);
-    showLoadError('Failed to start the file processor. Please refresh or try a different browser.');
-});
+startWorker();
+
+function startWorker() {
+    wasmReady = false;
+    workerReadyPromise = new Promise((resolve, reject) => {
+        resolveWorkerReady = resolve;
+        rejectWorkerReady = reject;
+    });
+
+    worker = new Worker(new URL('./worker.js', import.meta.url), { type: 'module' });
+    worker.addEventListener('message', handleWorkerMessage);
+    worker.addEventListener('error', handleWorkerError);
+    worker.addEventListener('messageerror', handleWorkerError);
+    workerReadyPromise.catch(() => {});
+}
+
+function handleWorkerError(event) {
+    const message = event.message || 'The file processor stopped unexpectedly.';
+    console.error('Worker failed:', message);
+
+    if (wasmReady) {
+        restartWorker('The file processor recovered from an unexpected error.');
+    } else {
+        rejectWorkerReady?.(new Error(message));
+        rejectPendingRequests(new Error(message));
+        showLoadError('Failed to start the file processor. Please refresh or try a different browser.');
+    }
+}
+
+function restartWorker(message) {
+    if (workerRestarting) {
+        return workerReadyPromise;
+    }
+
+    workerRestarting = true;
+    wasmReady = false;
+    dropZone.classList.remove('ready');
+    if (message) {
+        dropFeedback.textContent = message;
+        dropFeedback.classList.add('visible');
+    }
+    rejectPendingRequests(new Error(message || 'The file processor restarted.'));
+
+    worker?.terminate();
+    startWorker();
+    workerReadyPromise.catch((error) => {
+        showLoadError(error.message || 'Failed to restart the file processor.');
+    });
+    return workerReadyPromise;
+}
+
+function rejectPendingRequests(error) {
+    for (const { reject } of pendingRequests.values()) {
+        reject(error);
+    }
+    pendingRequests.clear();
+}
+
+function postWorkerControl(message) {
+    try {
+        worker?.postMessage(message);
+    } catch (e) {
+        console.warn('Unable to send worker control message:', e);
+    }
+}
 
 // Event Listeners
 dropZone.addEventListener('click', (e) => {
@@ -62,13 +126,18 @@ function handleWorkerMessage(event) {
 
     if (message.type === 'ready') {
         wasmReady = true;
+        workerRestarting = false;
         dropZone.classList.add('ready');
+        resolveWorkerReady?.();
         registerServiceWorker();
         updateActions();
         return;
     }
 
     if (message.type === 'fatal') {
+        const error = new Error(message.error || 'Failed to start the file processor.');
+        rejectWorkerReady?.(error);
+        rejectPendingRequests(error);
         showLoadError(message.error);
         return;
     }
@@ -81,17 +150,30 @@ function handleWorkerMessage(event) {
     pendingRequests.delete(message.requestId);
 
     if (message.type === 'failed') {
-        reject(new Error(message.error || 'Processing failed'));
+        const error = new Error(message.error || 'Processing failed');
+        reject(error);
+        if (message.fatal) {
+            restartWorker('The file processor recovered from a fatal file error. Re-add any failed file to try again.');
+        }
     } else {
         resolve(message);
     }
 }
 
-function sendWorkerMessage(type, payload = {}) {
+async function sendWorkerMessage(type, payload = {}) {
+    if (!wasmReady) {
+        await workerReadyPromise;
+    }
+
     return new Promise((resolve, reject) => {
         const id = ++requestId;
         pendingRequests.set(id, { resolve, reject });
-        worker.postMessage({ type, requestId: id, ...payload });
+        try {
+            worker.postMessage({ type, requestId: id, ...payload });
+        } catch (e) {
+            pendingRequests.delete(id);
+            reject(e);
+        }
     });
 }
 
@@ -155,6 +237,7 @@ async function addFiles(newFiles) {
             id,
             name: file.name,
             size: file.size,
+            sourceFile: file,
             type: 'unknown',
             metadata: emptyMetadata('unknown'),
             originalMetadata: emptyMetadata('unknown'),
@@ -334,7 +417,7 @@ async function processAllFiles() {
         updateActions();
 
         try {
-            const result = await sendWorkerMessage('process', { id });
+            const result = await sendWorkerMessage('process', { id, file: file.sourceFile });
             const current = files.get(id);
             if (!current) continue;
             current.cleanedData = new Uint8Array(result.cleanedBuffer);
@@ -356,7 +439,7 @@ async function processAllFiles() {
 
 function clearAllFiles() {
     files.clear();
-    worker.postMessage({ type: 'clear' });
+    postWorkerControl({ type: 'clear' });
     clearDropFeedback();
     renderFileList();
     updateActions();
@@ -364,7 +447,7 @@ function clearAllFiles() {
 
 function removeFile(id) {
     files.delete(id);
-    worker.postMessage({ type: 'forget', id });
+    postWorkerControl({ type: 'forget', id });
     renderFileList();
     updateActions();
 }

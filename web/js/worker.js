@@ -39,15 +39,22 @@ async function handleMessage(message) {
         if (message.type === 'analyze') {
             await analyzeFile(message);
         } else if (message.type === 'process') {
-            processFile(message);
+            await processFile(message);
         }
     } catch (e) {
+        const fatal = isFatalWasmError(e);
         self.postMessage({
             type: 'failed',
             requestId: message.requestId,
             id: message.id,
+            fatal,
             error: errorToString(e)
         });
+
+        if (fatal) {
+            fileData.clear();
+            setTimeout(() => self.close(), 0);
+        }
     }
 }
 
@@ -72,8 +79,14 @@ async function analyzeFile(message) {
     });
 }
 
-function processFile(message) {
-    const data = fileData.get(message.id);
+async function processFile(message) {
+    let data = fileData.get(message.id);
+    if (!data && message.file) {
+        const buffer = await message.file.arrayBuffer();
+        data = new Uint8Array(buffer);
+        fileData.set(message.id, data);
+    }
+
     if (!data) {
         throw new Error('File data is no longer available.');
     }
@@ -96,4 +109,13 @@ function errorToString(error) {
         return error.message;
     }
     return String(error || 'Unknown error');
+}
+
+function isFatalWasmError(error) {
+    if (typeof WebAssembly !== 'undefined' && error instanceof WebAssembly.RuntimeError) {
+        return true;
+    }
+
+    const message = errorToString(error).toLowerCase();
+    return message.includes('unreachable') || message.includes('memory access out of bounds');
 }

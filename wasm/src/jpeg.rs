@@ -17,6 +17,10 @@ fn is_metadata_marker(marker: u8) -> bool {
     matches!(marker, APP0..=0xEF | COM)
 }
 
+fn is_standalone_marker(marker: u8) -> bool {
+    marker == 0x00 || marker == 0x01 || (0xD0..=0xD7).contains(&marker)
+}
+
 fn should_strip_marker(marker: u8, segment_data: &[u8]) -> bool {
     match marker {
         APP2 if segment_data.starts_with(b"ICC_PROFILE") => false,
@@ -160,13 +164,19 @@ pub fn extract_metadata(data: &[u8]) -> MetadataInfo {
 
         let marker = data[offset + 1];
 
+        // JPEG permits repeated 0xFF fill bytes before a marker.
+        if marker == MARKER_PREFIX {
+            offset += 1;
+            continue;
+        }
+
         // End of metadata region
         if marker == SOS || marker == EOI {
             break;
         }
 
         // Skip markers without length
-        if marker == 0x00 || marker == 0x01 || (0xD0..=0xD7).contains(&marker) {
+        if is_standalone_marker(marker) {
             offset += 2;
             continue;
         }
@@ -475,6 +485,12 @@ pub fn remove_metadata(data: &[u8]) -> Result<Vec<u8>, String> {
 
         let marker = data[offset + 1];
 
+        // JPEG permits repeated 0xFF fill bytes before a marker.
+        if marker == MARKER_PREFIX {
+            offset += 1;
+            continue;
+        }
+
         // Handle special markers
         if marker == EOI {
             result.push(MARKER_PREFIX);
@@ -482,7 +498,7 @@ pub fn remove_metadata(data: &[u8]) -> Result<Vec<u8>, String> {
             break;
         }
 
-        if marker == 0x00 || marker == 0x01 || (0xD0..=0xD7).contains(&marker) {
+        if is_standalone_marker(marker) {
             result.push(MARKER_PREFIX);
             result.push(marker);
             offset += 2;
@@ -531,10 +547,15 @@ fn extract_orientation(data: &[u8]) -> Option<u16> {
         }
 
         let marker = data[offset + 1];
+        if marker == MARKER_PREFIX {
+            offset += 1;
+            continue;
+        }
+
         if marker == SOS || marker == EOI {
             break;
         }
-        if marker == 0x00 || marker == 0x01 || (0xD0..=0xD7).contains(&marker) {
+        if is_standalone_marker(marker) {
             offset += 2;
             continue;
         }
@@ -612,5 +633,37 @@ mod tests {
         assert_eq!(extract_orientation(&cleaned), Some(6));
         assert!(!cleaned.windows(b"Secret".len()).any(|w| w == b"Secret"));
         assert!(info.metadata_found.is_empty());
+    }
+
+    #[test]
+    fn test_extract_metadata_skips_header_fill_bytes() {
+        let mut data = vec![MARKER_PREFIX, SOI];
+        data.extend_from_slice(&[MARKER_PREFIX, MARKER_PREFIX, COM, 0, 8]);
+        data.extend_from_slice(b"Secret");
+        data.extend_from_slice(&[MARKER_PREFIX, EOI]);
+
+        let info = extract_metadata(&data);
+
+        assert_eq!(info.metadata_found.len(), 1);
+        assert_eq!(info.metadata_found[0].category, "Comment");
+        assert_eq!(info.metadata_found[0].value, "Secret");
+    }
+
+    #[test]
+    fn test_remove_metadata_skips_header_fill_bytes() {
+        let mut data = vec![MARKER_PREFIX, SOI];
+        data.extend_from_slice(&[MARKER_PREFIX, MARKER_PREFIX, 0xDB, 0, 4, 0xAA, 0xBB]);
+        data.extend_from_slice(&[MARKER_PREFIX, MARKER_PREFIX, COM, 0, 8]);
+        data.extend_from_slice(b"Secret");
+        data.extend_from_slice(&[MARKER_PREFIX, SOS, 0, 4, 0x03, 0x00]);
+        data.extend_from_slice(&[0x11, MARKER_PREFIX, EOI]);
+
+        let cleaned = remove_metadata(&data).unwrap();
+
+        assert!(cleaned
+            .windows(6)
+            .any(|w| w == [MARKER_PREFIX, 0xDB, 0, 4, 0xAA, 0xBB]));
+        assert!(!cleaned.windows(b"Secret".len()).any(|w| w == b"Secret"));
+        assert!(cleaned.ends_with(&[MARKER_PREFIX, EOI]));
     }
 }
