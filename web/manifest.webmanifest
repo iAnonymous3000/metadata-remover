@@ -1,7 +1,7 @@
 {
   "name": "Metadata Remover",
   "short_name": "Metadata",
-  "description": "Remove metadata from JPEG, PNG, WebP, GIF, and PDF files locally in your browser.",
+  "description": "Remove metadata from JPEG, PNG, WebP, GIF, PDF, DOCX, XLSX, and PPTX files locally in your browser.",
   "start_url": ".",
   "scope": ".",
   "display": "standalone",

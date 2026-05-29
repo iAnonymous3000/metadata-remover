@@ -3,14 +3,28 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self' 'wasm-unsafe-eval'; worker-src 'self'; connect-src 'self'; style-src 'self'; img-src 'self' data:; manifest-src 'self'; object-src 'none'; base-uri 'none'; form-action 'none'">
+    <meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self' 'wasm-unsafe-eval'; worker-src 'self'; connect-src 'self'; style-src 'self'; img-src 'self'; manifest-src 'self'; object-src 'none'; frame-src 'none'; base-uri 'none'; form-action 'none'">
+    <meta name="referrer" content="no-referrer">
+    <meta name="description" content="Remove metadata from JPEG, PNG, WebP, GIF, PDF, DOCX, XLSX, and PPTX files locally in your browser. No uploads, no accounts, and no file data leaves your device.">
+    <meta property="og:title" content="Metadata Remover">
+    <meta property="og:description" content="Privacy-first file cleaning that runs locally in your browser with Rust and WebAssembly.">
+    <meta property="og:type" content="website">
+    <meta property="og:url" content="https://ianonymous3000.github.io/metadata-remover/">
+    <meta property="og:image" content="https://ianonymous3000.github.io/metadata-remover/icon-512.png">
+    <meta name="twitter:card" content="summary">
+    <meta name="twitter:title" content="Metadata Remover">
+    <meta name="twitter:description" content="Remove file metadata locally in your browser. No uploads and no file data leaves your device.">
     <meta name="theme-color" content="#0d1117">
     <title>Metadata Remover - Privacy-First File Cleaning</title>
+    <link rel="canonical" href="https://ianonymous3000.github.io/metadata-remover/">
     <link rel="manifest" href="manifest.webmanifest">
     <link rel="icon" href="icon.svg" type="image/svg+xml">
     <link rel="stylesheet" href="css/style.css">
 </head>
 <body>
+    <noscript>
+        <div class="noscript-warning">Metadata Remover needs JavaScript and WebAssembly to clean files locally in your browser.</div>
+    </noscript>
     <div class="container">
         <header>
             <h1>Metadata Remover</h1>
@@ -26,8 +40,8 @@
                         <line x1="12" y1="3" x2="12" y2="15"/>
                     </svg>
                     <p>Drop files here or <label for="file-input" class="file-label">browse</label></p>
-                    <p id="supported-formats" class="supported">Supports: JPEG, PNG, WebP, GIF, PDF</p>
-                    <input type="file" id="file-input" multiple accept=".jpg,.jpeg,.png,.webp,.gif,.pdf,image/jpeg,image/png,image/webp,image/gif,application/pdf">
+                    <p id="supported-formats" class="supported">Supports: JPEG, PNG, WebP, GIF, PDF, DOCX, XLSX, PPTX</p>
+                    <input type="file" id="file-input" multiple accept=".jpg,.jpeg,.png,.webp,.gif,.pdf,.doc,.xls,.ppt,.docx,.xlsx,.pptx,image/jpeg,image/png,image/webp,image/gif,application/pdf,application/vnd.openxmlformats-officedocument.wordprocessingml.document,application/vnd.openxmlformats-officedocument.spreadsheetml.sheet,application/vnd.openxmlformats-officedocument.presentationml.presentation">
                 </div>
             </div>
             <div id="drop-feedback" class="drop-feedback" role="status" aria-live="polite"></div>
@@ -64,13 +78,15 @@
                 </div>
             </section>
 
-            <div id="file-list" class="file-list" aria-live="polite"></div>
+            <div id="file-list" class="file-list"></div>
 
             <div id="actions" class="actions hidden">
                 <button id="process-btn" class="btn btn-primary">Remove All Metadata</button>
                 <button id="download-all-btn" class="btn btn-secondary" disabled>Download All</button>
                 <button id="clear-btn" class="btn btn-secondary">Clear All</button>
             </div>
+
+            <div id="sr-status" class="sr-only" role="status" aria-live="polite"></div>
         </main>
 
         <footer>

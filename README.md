@@ -1,6 +1,11 @@
 # Metadata Remover
 
+[![Build and Deploy](https://github.com/iAnonymous3000/metadata-remover/actions/workflows/deploy.yml/badge.svg)](https://github.com/iAnonymous3000/metadata-remover/actions/workflows/deploy.yml)
+[![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](LICENSE)
+
 Privacy-focused metadata removal tool that runs entirely in your browser using WebAssembly. **No server uploads** - files never leave your machine.
+
+Live demo: https://ianonymous3000.github.io/metadata-remover/
 
 ## Features
 
@@ -9,6 +14,8 @@ Privacy-focused metadata removal tool that runs entirely in your browser using W
 - **WebP** - Removes EXIF, XMP, and unknown non-visual RIFF chunks while preserving image, alpha, animation, and color-profile chunks
 - **GIF** - Removes comments, XMP blocks, and unknown application extensions while preserving image frames, transparency controls, plain-text blocks, and animation loops
 - **PDF** - Removes info dictionaries, XMP metadata streams, document IDs, app-specific metadata, and embedded file attachments
+- **DOCX** - Removes package properties, comments, review authors, revision IDs, and tracked-change metadata; accepted insertions are kept and deletions/comments are dropped
+- **XLSX/PPTX** - Removes package properties and flags comments or revision trails that this version does not remove
 - **Verification** - Re-scans cleaned output before download and flags any remaining removable metadata
 
 ## How It Works
@@ -39,6 +46,9 @@ npm run build
 
 # Serve locally
 npm run serve
+
+# Optional parser fuzzing
+cd wasm && cargo fuzz run parsers
 ```
 
 ## Project Structure
@@ -53,7 +63,8 @@ metadata-remover/
 │   │   ├── png.rs      # PNG metadata handling
 │   │   ├── pdf.rs      # PDF metadata handling
 │   │   ├── webp.rs     # WebP metadata handling
-│   │   └── gif.rs      # GIF metadata handling
+│   │   ├── gif.rs      # GIF metadata handling
+│   │   └── ooxml.rs    # DOCX/XLSX/PPTX metadata handling
 │   └── Cargo.toml
 ├── web/                 # Static frontend
 │   ├── index.html
@@ -69,7 +80,7 @@ metadata-remover/
 - Worker-based processing keeps parsing and cleaning off the main UI thread
 - Per-file size limit prevents accidental browser memory exhaustion
 - CSP limits scripts, workers, network fetches, forms, and embedded objects to the local app origin
-- Optimized WASM binary (~340KB with `opt-level=z`, LTO, panic=abort)
+- Size-conscious WASM binary (~420KB, ~170KB gzipped over the wire) built with `opt-level=z`, LTO, and panic=abort
 
 ## Supported Metadata Types
 
@@ -80,11 +91,13 @@ metadata-remover/
 | WebP | EXIF chunks, XMP chunks, unknown non-visual RIFF chunks |
 | GIF | Comment extensions, XMP application extensions, unknown application extensions |
 | PDF | Info dictionary, XMP metadata streams, Document ID, PieceInfo, MarkInfo, embedded file attachments |
+| DOCX | Package document properties, comment parts, comment relationships, review authors, tracked-change wrappers, deleted tracked text, revision IDs |
+| XLSX/PPTX | Package document properties; comments and revision trails are detected and reported as remaining review data |
 
 ## Privacy
 
 - 100% client-side processing
-- No analytics, tracking, or network requests
+- No analytics or tracking; no requests carry your file data
 - Works offline after initial load through a service worker cache
 - Installable as a standalone web app where browser PWA support is available
 - Open source (audit the code yourself)
@@ -92,6 +105,8 @@ metadata-remover/
 ## Limitations
 
 - JPEG orientation and color-transform/profile segments are preserved to avoid sideways images and color shifts.
+- Legacy binary Office files (`.doc`, `.xls`, `.ppt`) are not supported; save them as `.docx`, `.xlsx`, or `.pptx` first.
+- XLSX and PPTX comments/revision trails are surfaced when detected but are not removed in this release.
 - This tool removes structural metadata; it does not detect steganographic content embedded in pixels or document bodies.
 
 ## License

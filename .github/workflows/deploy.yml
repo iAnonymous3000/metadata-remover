@@ -22,14 +22,37 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+
       - name: Setup Rust
         uses: dtolnay/rust-toolchain@stable
         with:
           targets: wasm32-unknown-unknown
-          components: clippy
+          components: clippy,rustfmt
+
+      - name: Cache Cargo
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.cargo/registry
+            ~/.cargo/git
+            wasm/target
+          key: ${{ runner.os }}-cargo-${{ hashFiles('wasm/Cargo.lock') }}
+          restore-keys: |
+            ${{ runner.os }}-cargo-
 
       - name: Install wasm-pack
         run: cargo install wasm-pack --version "$WASM_PACK_VERSION" --locked
+
+      - name: Install cargo-audit
+        run: cargo install cargo-audit --locked
+
+      - name: Format Rust
+        working-directory: ./wasm
+        run: cargo fmt --check
 
       - name: Test Rust
         working-directory: ./wasm
@@ -38,6 +61,13 @@ jobs:
       - name: Lint Rust
         working-directory: ./wasm
         run: cargo clippy --locked --all-targets -- -D warnings
+
+      - name: Audit Rust dependencies
+        working-directory: ./wasm
+        run: cargo audit --deny warnings
+
+      - name: Test JavaScript
+        run: npm test
 
       - name: Build site
         run: npm run dist

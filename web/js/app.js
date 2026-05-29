@@ -1,19 +1,25 @@
 // Detect base path for GitHub Pages (handles /repo-name/ subpath).
 const scriptUrl = import.meta.url;
 const basePath = scriptUrl.substring(0, scriptUrl.lastIndexOf('/js/'));
+const isFramed = window.self !== window.top;
 const MAX_FILE_BYTES = 100 * 1024 * 1024;
-const SUPPORTED_EXTENSIONS = new Set(['jpg', 'jpeg', 'png', 'webp', 'gif', 'pdf']);
-const SUPPORTED_FORMATS_LABEL = 'JPEG, PNG, WebP, GIF, PDF';
+const ZIP32_MAX = 0xffffffff;
+const ZIP16_MAX = 0xffff;
+const SUPPORTED_EXTENSIONS = new Set(['jpg', 'jpeg', 'png', 'webp', 'gif', 'pdf', 'docx', 'xlsx', 'pptx']);
+const LEGACY_OFFICE_EXTENSIONS = new Set(['doc', 'xls', 'ppt']);
+const SUPPORTED_FORMATS_LABEL = 'JPEG, PNG, WebP, GIF, PDF, DOCX, XLSX, PPTX';
 
 let wasmReady = false;
 let requestId = 0;
 const files = new Map();
 const pendingRequests = new Map();
+let queuedFiles = [];
 let worker = null;
 let workerReadyPromise = Promise.resolve();
 let resolveWorkerReady = null;
 let rejectWorkerReady = null;
 let workerRestarting = false;
+let dragDepth = 0;
 
 // DOM Elements
 const dropZone = document.getElementById('drop-zone');
@@ -27,9 +33,23 @@ const clearBtn = document.getElementById('clear-btn');
 const modal = document.getElementById('modal');
 const modalBody = document.getElementById('modal-body');
 const modalClose = document.querySelector('.modal-close');
+const srStatus = document.getElementById('sr-status');
 let lastFocusedElement = null;
 
-startWorker();
+if (isFramed) {
+    bustFrame();
+    showLoadError('Open Metadata Remover directly in a new tab to clean files safely.');
+} else {
+    startWorker();
+}
+
+function bustFrame() {
+    try {
+        window.top.location = window.self.location.href;
+    } catch {
+        document.documentElement.classList.add('framed');
+    }
+}
 
 function startWorker() {
     wasmReady = false;
@@ -99,6 +119,7 @@ function postWorkerControl(message) {
 dropZone.addEventListener('click', (e) => {
     if (e.target.tagName !== 'LABEL') fileInput.click();
 });
+dropZone.addEventListener('dragenter', handleDragEnter);
 dropZone.addEventListener('dragover', handleDragOver);
 dropZone.addEventListener('dragleave', handleDragLeave);
 dropZone.addEventListener('drop', handleDrop);
@@ -131,6 +152,7 @@ function handleWorkerMessage(event) {
         resolveWorkerReady?.();
         registerServiceWorker();
         updateActions();
+        flushQueuedFiles();
         return;
     }
 
@@ -187,18 +209,30 @@ function showLoadError(message) {
     `;
 }
 
+function handleDragEnter(e) {
+    e.preventDefault();
+    dragDepth += 1;
+    dropZone.classList.add('drag-over');
+}
+
 function handleDragOver(e) {
     e.preventDefault();
-    dropZone.classList.add('drag-over');
+    if (e.dataTransfer) {
+        e.dataTransfer.dropEffect = 'copy';
+    }
 }
 
 function handleDragLeave(e) {
     e.preventDefault();
-    dropZone.classList.remove('drag-over');
+    dragDepth = Math.max(0, dragDepth - 1);
+    if (dragDepth === 0) {
+        dropZone.classList.remove('drag-over');
+    }
 }
 
 function handleDrop(e) {
     e.preventDefault();
+    dragDepth = 0;
     dropZone.classList.remove('drag-over');
     addFiles(Array.from(e.dataTransfer.files));
 }
@@ -210,24 +244,35 @@ function handleFileSelect(e) {
 
 async function addFiles(newFiles) {
     if (!wasmReady) {
-        alert('Please wait for the application to finish loading.');
+        queueFiles(newFiles);
         return;
     }
 
     const supportedFiles = [];
     const unsupportedFiles = [];
+    const legacyOfficeFiles = [];
 
     for (const file of newFiles) {
         const ext = extensionFor(file.name);
         if (SUPPORTED_EXTENSIONS.has(ext)) {
             supportedFiles.push(file);
+        } else if (LEGACY_OFFICE_EXTENSIONS.has(ext)) {
+            legacyOfficeFiles.push(file);
         } else {
             unsupportedFiles.push(file);
         }
     }
 
+    const feedbackMessages = [];
+    if (legacyOfficeFiles.length > 0) {
+        feedbackMessages.push(legacyOfficeMessage(legacyOfficeFiles));
+    }
     if (unsupportedFiles.length > 0) {
-        showUnsupportedFiles(unsupportedFiles);
+        feedbackMessages.push(unsupportedFilesMessage(unsupportedFiles));
+    }
+
+    if (feedbackMessages.length > 0) {
+        showDropFeedback(feedbackMessages.join(' '));
     } else {
         clearDropFeedback();
     }
@@ -249,13 +294,13 @@ async function addFiles(newFiles) {
             errorMessage: null
         };
         files.set(id, record);
-        renderFileList();
+        upsertFileRow(id);
         updateActions();
 
         if (file.size > MAX_FILE_BYTES) {
             record.status = 'error';
             record.errorMessage = `File exceeds the ${formatSize(MAX_FILE_BYTES)} limit.`;
-            renderFileList();
+            upsertFileRow(id);
             updateActions();
             continue;
         }
@@ -278,19 +323,50 @@ async function addFiles(newFiles) {
             current.errorMessage = e.message;
         }
 
-        renderFileList();
+        upsertFileRow(id);
         updateActions();
     }
+
+    announce(addedSummary(supportedFiles.length));
 }
 
-function showUnsupportedFiles(unsupportedFiles) {
+function queueFiles(newFiles) {
+    if (newFiles.length === 0) return;
+    queuedFiles.push(...newFiles);
+    const fileText = queuedFiles.length === 1 ? 'file' : 'files';
+    dropFeedback.textContent = `Queued ${queuedFiles.length} ${fileText} until the local processor is ready.`;
+    dropFeedback.classList.add('visible');
+}
+
+function flushQueuedFiles() {
+    if (!wasmReady || queuedFiles.length === 0) return;
+    const filesToAdd = queuedFiles;
+    queuedFiles = [];
+    addFiles(filesToAdd);
+}
+
+function unsupportedFilesMessage(unsupportedFiles) {
     const shownNames = unsupportedFiles
         .slice(0, 3)
         .map((file) => file.name || 'unnamed file');
     const extraCount = unsupportedFiles.length - shownNames.length;
     const extraText = extraCount > 0 ? ` and ${extraCount} more` : '';
     const fileText = unsupportedFiles.length === 1 ? 'file' : 'files';
-    dropFeedback.textContent = `Skipped ${unsupportedFiles.length} unsupported ${fileText}: ${shownNames.join(', ')}${extraText}. Supported formats: ${SUPPORTED_FORMATS_LABEL}.`;
+    return `Skipped ${unsupportedFiles.length} unsupported ${fileText}: ${shownNames.join(', ')}${extraText}. Supported formats: ${SUPPORTED_FORMATS_LABEL}.`;
+}
+
+function legacyOfficeMessage(legacyOfficeFiles) {
+    const shownNames = legacyOfficeFiles
+        .slice(0, 3)
+        .map((file) => file.name || 'unnamed file');
+    const extraCount = legacyOfficeFiles.length - shownNames.length;
+    const extraText = extraCount > 0 ? ` and ${extraCount} more` : '';
+    const fileText = legacyOfficeFiles.length === 1 ? 'file' : 'files';
+    return `Skipped ${legacyOfficeFiles.length} legacy Office ${fileText}: ${shownNames.join(', ')}${extraText}. Save .doc, .xls, or .ppt files as .docx, .xlsx, or .pptx first.`;
+}
+
+function showDropFeedback(message) {
+    dropFeedback.textContent = message;
     dropFeedback.classList.add('visible');
 }
 
@@ -299,50 +375,119 @@ function clearDropFeedback() {
     dropFeedback.classList.remove('visible');
 }
 
-function renderFileList() {
-    fileList.innerHTML = '';
+// The file list is no longer an aria-live region (it churned on every row
+// update). Instead we announce batch milestones once, through a dedicated
+// visually-hidden status region.
+function announce(message) {
+    if (srStatus) srStatus.textContent = message;
+}
 
-    for (const [id, file] of files) {
-        const item = document.createElement('div');
-        item.className = 'file-item';
-        item.dataset.id = id;
+function addedSummary(count) {
+    if (count === 0) return '';
+    return `${count} ${count === 1 ? 'file' : 'files'} added and analyzed.`;
+}
 
-        const typeLabel = file.type === 'unknown' ? extensionFor(file.name) || 'file' : file.type;
-        const metaText = renderMetaText(file);
-        const canDownload = Boolean(file.cleanedData);
+function processedSummary() {
+    let clean = 0;
+    let review = 0;
+    let failed = 0;
+    for (const file of files.values()) {
+        if (file.status === 'done') clean += 1;
+        else if (file.status === 'warning') review += 1;
+        else if (file.status === 'error') failed += 1;
+    }
 
-        item.innerHTML = `
-            <div class="file-icon ${escapeHtml(typeLabel)}">${escapeHtml(typeLabel)}</div>
+    const parts = [];
+    if (clean > 0) parts.push(`${clean} verified clean`);
+    if (review > 0) parts.push(`${review} need review`);
+    if (failed > 0) parts.push(`${failed} could not be processed`);
+    return parts.length > 0 ? `Cleaning complete: ${parts.join(', ')}.` : '';
+}
+
+const VIEW_ICON_SVG = `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true"><path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z"/><circle cx="12" cy="12" r="3"/></svg>`;
+const DOWNLOAD_ICON_SVG = `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/></svg>`;
+const REMOVE_ICON_SVG = `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg>`;
+
+function fileTypeLabel(file) {
+    return file.type === 'unknown' ? extensionFor(file.name) || 'file' : file.type;
+}
+
+function fileRowElement(id) {
+    return fileList.querySelector(`.file-item[data-id="${id}"]`);
+}
+
+function downloadButtonHtml(file) {
+    return `
+                <button class="btn-icon" title="Download" aria-label="Download cleaned ${escapeAttribute(file.name)}" data-action="download" data-id="${file.id}">
+                    ${DOWNLOAD_ICON_SVG}
+                </button>`;
+}
+
+function fileRowHtml(file) {
+    const typeLabel = fileTypeLabel(file);
+    const typeClass = safeClassName(typeLabel);
+    return `
+            <div class="file-icon ${typeClass}">${escapeHtml(typeLabel)}</div>
             <div class="file-info">
                 <div class="file-name" title="${escapeAttribute(file.name)}">${escapeHtml(file.name)}</div>
-                <div class="file-meta">${metaText}</div>
+                <div class="file-meta">${renderMetaText(file)}</div>
             </div>
             <div class="file-status">${renderStatus(file.status)}</div>
             <div class="file-actions">
-                <button class="btn-icon" title="View metadata" aria-label="View metadata for ${escapeAttribute(file.name)}" data-action="view" data-id="${id}">
-                    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true">
-                        <path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z"/>
-                        <circle cx="12" cy="12" r="3"/>
-                    </svg>
-                </button>
-                ${canDownload ? `
-                <button class="btn-icon" title="Download" aria-label="Download cleaned ${escapeAttribute(file.name)}" data-action="download" data-id="${id}">
-                    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true">
-                        <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/>
-                        <polyline points="7 10 12 15 17 10"/>
-                        <line x1="12" y1="15" x2="12" y2="3"/>
-                    </svg>
-                </button>
-                ` : ''}
-                <button class="btn-icon" title="Remove" aria-label="Remove ${escapeAttribute(file.name)} from the list" data-action="remove" data-id="${id}">
-                    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true">
-                        <line x1="18" y1="6" x2="6" y2="18"/>
-                        <line x1="6" y1="6" x2="18" y2="18"/>
-                    </svg>
+                <button class="btn-icon" title="View metadata" aria-label="View metadata for ${escapeAttribute(file.name)}" data-action="view" data-id="${file.id}">
+                    ${VIEW_ICON_SVG}
+                </button>${file.cleanedData ? downloadButtonHtml(file) : ''}
+                <button class="btn-icon" title="Remove" aria-label="Remove ${escapeAttribute(file.name)} from the list" data-action="remove" data-id="${file.id}">
+                    ${REMOVE_ICON_SVG}
                 </button>
             </div>
         `;
-        fileList.appendChild(item);
+}
+
+function createFileRow(file) {
+    const item = document.createElement('div');
+    item.className = 'file-item';
+    item.dataset.id = file.id;
+    item.innerHTML = fileRowHtml(file);
+    return item;
+}
+
+// Full rebuild; used only when the whole list changes at once (e.g. Clear All).
+function renderFileList() {
+    fileList.innerHTML = '';
+    for (const file of files.values()) {
+        fileList.appendChild(createFileRow(file));
+    }
+}
+
+// Patch only the parts of one row that change across its lifecycle. Updating one
+// file never re-renders the rest of the list, so a finishing file can't steal
+// focus from a button the user is on or trigger list-wide screen-reader churn.
+function upsertFileRow(id) {
+    const file = files.get(id);
+    if (!file) return;
+
+    const row = fileRowElement(id);
+    if (!row) {
+        fileList.appendChild(createFileRow(file));
+        return;
+    }
+
+    const icon = row.querySelector('.file-icon');
+    const typeLabel = fileTypeLabel(file);
+    icon.className = `file-icon ${safeClassName(typeLabel)}`;
+    icon.textContent = typeLabel;
+
+    row.querySelector('.file-meta').innerHTML = renderMetaText(file);
+    row.querySelector('.file-status').innerHTML = renderStatus(file.status);
+
+    const actionsEl = row.querySelector('.file-actions');
+    const downloadBtn = actionsEl.querySelector('[data-action="download"]');
+    if (file.cleanedData && !downloadBtn) {
+        actionsEl.querySelector('[data-action="view"]')
+            .insertAdjacentHTML('afterend', downloadButtonHtml(file));
+    } else if (!file.cleanedData && downloadBtn) {
+        downloadBtn.remove();
     }
 }
 
@@ -403,9 +548,14 @@ function updateActions() {
     const hasFiles = files.size > 0;
     actions.classList.toggle('hidden', !hasFiles);
 
-    const hasPending = [...files.values()].some((file) => file.status === 'pending');
-    const hasCleaned = [...files.values()].some((file) => file.cleanedData);
-    const busy = [...files.values()].some((file) => file.status === 'loading' || file.status === 'processing');
+    let hasPending = false;
+    let hasCleaned = false;
+    let busy = false;
+    for (const file of files.values()) {
+        if (file.status === 'pending') hasPending = true;
+        if (file.cleanedData) hasCleaned = true;
+        if (file.status === 'loading' || file.status === 'processing') busy = true;
+    }
     processBtn.disabled = !hasFiles || !wasmReady || !hasPending || busy;
     downloadAllBtn.disabled = !hasFiles || !hasCleaned || busy;
 }
@@ -417,7 +567,7 @@ async function processAllFiles() {
         if (file.status !== 'pending') continue;
 
         file.status = 'processing';
-        renderFileList();
+        upsertFileRow(id);
         updateActions();
 
         try {
@@ -436,9 +586,11 @@ async function processAllFiles() {
             current.status = 'error';
         }
 
-        renderFileList();
+        upsertFileRow(id);
         updateActions();
     }
+
+    announce(processedSummary());
 }
 
 function clearAllFiles() {
@@ -452,7 +604,7 @@ function clearAllFiles() {
 function removeFile(id) {
     files.delete(id);
     postWorkerControl({ type: 'forget', id });
-    renderFileList();
+    fileRowElement(id)?.remove();
     updateActions();
 }
 
@@ -515,21 +667,31 @@ function showMetadata(id) {
 }
 
 function renderPreservedMetadataNote(fileType) {
-    const notes = {
+    const preserved = {
         jpeg: 'JPEG orientation and color-profile/color-transform data may be kept so photos do not rotate sideways or shift colors.',
         png: 'PNG transparency and color-management chunks are kept so images render the same after cleaning.',
         webp: 'WebP image, alpha, animation, and color-profile chunks are kept so the file still displays correctly.',
         gif: 'GIF frames, transparency controls, plain-text image blocks, and animation loops are kept so animation and appearance are preserved.'
     };
 
-    const note = notes[fileType];
-    if (!note) return '';
-
-    return `
+    if (preserved[fileType]) {
+        return `
         <div class="metadata-note">
-            <strong>Kept for correct display:</strong> ${escapeHtml(note)}
+            <strong>Kept for correct display:</strong> ${escapeHtml(preserved[fileType])}
         </div>
     `;
+    }
+
+    if (fileType === 'docx') {
+        const note = 'Cleaning a DOCX accepts tracked changes and removes review content: any pending insertions are kept, while tracked deletions, comments, and reviewer names are dropped. This changes the document’s visible review state, not only hidden metadata.';
+        return `
+        <div class="metadata-note">
+            <strong>Changes document content:</strong> ${escapeHtml(note)}
+        </div>
+    `;
+    }
+
+    return '';
 }
 
 function closeModal() {
@@ -565,8 +727,7 @@ function downloadFile(id) {
 
     const a = document.createElement('a');
     a.href = url;
-    const [name, ext] = splitFilename(file.name);
-    a.download = `${name}_clean.${ext}`;
+    a.download = cleanedFilename(file.name);
     a.click();
 
     setTimeout(() => URL.revokeObjectURL(url), 0);
@@ -576,13 +737,19 @@ function downloadAllFiles() {
     const cleanedFiles = [...files.values()].filter((file) => file.cleanedData);
     if (cleanedFiles.length === 0) return;
 
-    const zip = createZip(cleanedFiles.map((file) => {
-        const [name, ext] = splitFilename(file.name);
-        return {
-            name: `${name}_clean.${ext}`,
+    let zip;
+    try {
+        const usedNames = new Set();
+        zip = createZip(cleanedFiles.map((file) => ({
+            name: uniqueFilename(cleanedFilename(file.name), usedNames),
             data: file.cleanedData
-        };
-    }));
+        })));
+    } catch (e) {
+        dropFeedback.textContent = e.message || 'Unable to create ZIP file.';
+        dropFeedback.classList.add('visible');
+        return;
+    }
+
     const url = URL.createObjectURL(zip);
     const a = document.createElement('a');
     a.href = url;
@@ -592,6 +759,10 @@ function downloadAllFiles() {
 }
 
 function createZip(entries) {
+    if (entries.length > ZIP16_MAX) {
+        throw new Error('Too many files for this ZIP download.');
+    }
+
     const localParts = [];
     const centralParts = [];
     let offset = 0;
@@ -599,6 +770,10 @@ function createZip(entries) {
     for (const entry of entries) {
         const nameBytes = new TextEncoder().encode(entry.name);
         const data = entry.data instanceof Uint8Array ? entry.data : new Uint8Array(entry.data);
+        if (data.byteLength > ZIP32_MAX || offset > ZIP32_MAX) {
+            throw new Error('Batch is too large for ZIP download.');
+        }
+
         const crc = crc32(data);
         const localHeader = zipHeader(30, 0x04034b50);
         localHeader.setUint16(4, 20, true);
@@ -629,6 +804,10 @@ function createZip(entries) {
 
     const centralOffset = offset;
     const centralSize = centralParts.reduce((size, part) => size + part.byteLength, 0);
+    if (centralSize > ZIP32_MAX || centralOffset > ZIP32_MAX) {
+        throw new Error('Batch is too large for ZIP download.');
+    }
+
     const end = zipHeader(22, 0x06054b50);
     end.setUint16(8, entries.length, true);
     end.setUint16(10, entries.length, true);
@@ -670,6 +849,26 @@ function splitFilename(name) {
     return idx > 0 ? [name.slice(0, idx), name.slice(idx + 1)] : [name, ''];
 }
 
+function cleanedFilename(name) {
+    const [base, ext] = splitFilename(name || 'file');
+    const cleanBase = base || 'file';
+    return ext ? `${cleanBase}_clean.${ext}` : `${cleanBase}_clean`;
+}
+
+function uniqueFilename(name, usedNames) {
+    const [base, ext] = splitFilename(name);
+    let candidate = name;
+    let index = 2;
+
+    while (usedNames.has(candidate.toLowerCase())) {
+        candidate = ext ? `${base}-${index}.${ext}` : `${base}-${index}`;
+        index += 1;
+    }
+
+    usedNames.add(candidate.toLowerCase());
+    return candidate;
+}
+
 function extensionFor(name) {
     const ext = name.split('.').pop();
     return ext ? ext.toLowerCase() : '';
@@ -688,7 +887,10 @@ const MIME_TYPES = {
     png: 'image/png',
     webp: 'image/webp',
     gif: 'image/gif',
-    pdf: 'application/pdf'
+    pdf: 'application/pdf',
+    docx: 'application/vnd.openxmlformats-officedocument.wordprocessingml.document',
+    xlsx: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
+    pptx: 'application/vnd.openxmlformats-officedocument.presentationml.presentation'
 };
 
 function getMimeType(type) {
@@ -711,6 +913,10 @@ function escapeHtml(text) {
 
 function escapeAttribute(text) {
     return escapeHtml(text).replaceAll('"', '&quot;').replaceAll("'", '&#39;');
+}
+
+function safeClassName(text) {
+    return String(text).toLowerCase().replace(/[^a-z0-9_-]/g, '-');
 }
 
 function registerServiceWorker() {

@@ -1,5 +1,6 @@
 # Rust / Cargo
 /wasm/target/
+/wasm/fuzz/target/
 
 # WASM build output (rebuilt on deploy)
 /wasm/pkg/

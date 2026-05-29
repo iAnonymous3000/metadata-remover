@@ -131,6 +131,12 @@ function friendlyFileError(fileType, error) {
     const typeLabel = fileTypeLabel(fileType);
 
     if (
+        lower.includes('legacy binary office')
+    ) {
+        return message;
+    }
+
+    if (
         lower.includes('invalid segment length')
         || lower.includes('invalid scan segment length')
         || lower.includes('truncated')
@@ -159,7 +165,11 @@ function fileTypeLabel(fileType) {
         png: 'PNG',
         webp: 'WebP',
         gif: 'GIF',
-        pdf: 'PDF'
+        pdf: 'PDF',
+        docx: 'DOCX',
+        xlsx: 'XLSX',
+        pptx: 'PPTX',
+        'office-legacy': 'legacy Office'
     };
     return labels[fileType] || 'file';
 }

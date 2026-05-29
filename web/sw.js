@@ -1,4 +1,4 @@
-const CACHE_NAME = 'metadata-remover-v6';
+const CACHE_NAME = 'metadata-remover-v8';
 const ASSETS = [
     '.',
     'index.html',
