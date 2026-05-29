@@ -1,14 +1,20 @@
 use serde::{Deserialize, Serialize};
 use wasm_bindgen::prelude::*;
 
+mod gif;
 mod jpeg;
 mod pdf;
 mod png;
+mod webp;
 
 // Magic bytes for file type detection
+const GIF87A_MAGIC: [u8; 6] = [0x47, 0x49, 0x46, 0x38, 0x37, 0x61];
+const GIF89A_MAGIC: [u8; 6] = [0x47, 0x49, 0x46, 0x38, 0x39, 0x61];
 const JPEG_MAGIC: [u8; 3] = [0xFF, 0xD8, 0xFF];
 const PNG_MAGIC: [u8; 8] = [0x89, 0x50, 0x4E, 0x47, 0x0D, 0x0A, 0x1A, 0x0A];
 const PDF_MAGIC: [u8; 4] = [0x25, 0x50, 0x44, 0x46]; // %PDF
+const RIFF_MAGIC: [u8; 4] = [0x52, 0x49, 0x46, 0x46];
+const WEBP_MAGIC: [u8; 4] = [0x57, 0x45, 0x42, 0x50];
 
 #[derive(Serialize, Deserialize, Debug)]
 pub struct MetadataInfo {
@@ -32,6 +38,16 @@ pub fn detect_file_type(data: &[u8]) -> String {
         "png".into()
     } else if data.len() >= PDF_MAGIC.len() && data[..PDF_MAGIC.len()] == PDF_MAGIC {
         "pdf".into()
+    } else if data.len() >= 12
+        && data[..RIFF_MAGIC.len()] == RIFF_MAGIC
+        && data[8..12] == WEBP_MAGIC
+    {
+        "webp".into()
+    } else if data.len() >= GIF87A_MAGIC.len()
+        && (data[..GIF87A_MAGIC.len()] == GIF87A_MAGIC
+            || data[..GIF89A_MAGIC.len()] == GIF89A_MAGIC)
+    {
+        "gif".into()
     } else {
         "unknown".into()
     }
@@ -45,6 +61,8 @@ pub fn extract_metadata(data: &[u8]) -> JsValue {
         "jpeg" => jpeg::extract_metadata(data),
         "png" => png::extract_metadata(data),
         "pdf" => pdf::extract_metadata(data),
+        "webp" => webp::extract_metadata(data),
+        "gif" => gif::extract_metadata(data),
         _ => MetadataInfo {
             file_type: "unknown".to_string(),
             metadata_found: vec![],
@@ -63,6 +81,8 @@ pub fn remove_metadata(data: &[u8]) -> Result<js_sys::Uint8Array, JsValue> {
         "jpeg" => jpeg::remove_metadata(data),
         "png" => png::remove_metadata(data),
         "pdf" => pdf::remove_metadata(data),
+        "webp" => webp::remove_metadata(data),
+        "gif" => gif::remove_metadata(data),
         _ => Err("Unsupported file type".to_string()),
     };
 

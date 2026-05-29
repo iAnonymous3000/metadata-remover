@@ -26,10 +26,11 @@
                         <line x1="12" y1="3" x2="12" y2="15"/>
                     </svg>
                     <p>Drop files here or <label for="file-input" class="file-label">browse</label></p>
-                    <p id="supported-formats" class="supported">Supports: JPEG, PNG, PDF</p>
-                    <input type="file" id="file-input" multiple accept=".jpg,.jpeg,.png,.pdf,image/jpeg,image/png,application/pdf">
+                    <p id="supported-formats" class="supported">Supports: JPEG, PNG, WebP, GIF, PDF</p>
+                    <input type="file" id="file-input" multiple accept=".jpg,.jpeg,.png,.webp,.gif,.pdf,image/jpeg,image/png,image/webp,image/gif,application/pdf">
                 </div>
             </div>
+            <div id="drop-feedback" class="drop-feedback" role="status" aria-live="polite"></div>
 
             <div id="file-list" class="file-list" aria-live="polite"></div>
 

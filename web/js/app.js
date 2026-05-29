@@ -2,7 +2,8 @@
 const scriptUrl = import.meta.url;
 const basePath = scriptUrl.substring(0, scriptUrl.lastIndexOf('/js/'));
 const MAX_FILE_BYTES = 100 * 1024 * 1024;
-const SUPPORTED_EXTENSIONS = new Set(['jpg', 'jpeg', 'png', 'pdf']);
+const SUPPORTED_EXTENSIONS = new Set(['jpg', 'jpeg', 'png', 'webp', 'gif', 'pdf']);
+const SUPPORTED_FORMATS_LABEL = 'JPEG, PNG, WebP, GIF, PDF';
 
 let wasmReady = false;
 let requestId = 0;
@@ -11,6 +12,7 @@ const pendingRequests = new Map();
 
 // DOM Elements
 const dropZone = document.getElementById('drop-zone');
+const dropFeedback = document.getElementById('drop-feedback');
 const fileInput = document.getElementById('file-input');
 const fileList = document.getElementById('file-list');
 const actions = document.getElementById('actions');
@@ -129,10 +131,23 @@ async function addFiles(newFiles) {
         return;
     }
 
-    const supportedFiles = newFiles.filter((file) => {
+    const supportedFiles = [];
+    const unsupportedFiles = [];
+
+    for (const file of newFiles) {
         const ext = extensionFor(file.name);
-        return SUPPORTED_EXTENSIONS.has(ext);
-    });
+        if (SUPPORTED_EXTENSIONS.has(ext)) {
+            supportedFiles.push(file);
+        } else {
+            unsupportedFiles.push(file);
+        }
+    }
+
+    if (unsupportedFiles.length > 0) {
+        showUnsupportedFiles(unsupportedFiles);
+    } else {
+        clearDropFeedback();
+    }
 
     for (const file of supportedFiles) {
         const id = crypto.randomUUID();
@@ -179,6 +194,22 @@ async function addFiles(newFiles) {
         renderFileList();
         updateActions();
     }
+}
+
+function showUnsupportedFiles(unsupportedFiles) {
+    const shownNames = unsupportedFiles
+        .slice(0, 3)
+        .map((file) => file.name || 'unnamed file');
+    const extraCount = unsupportedFiles.length - shownNames.length;
+    const extraText = extraCount > 0 ? ` and ${extraCount} more` : '';
+    const fileText = unsupportedFiles.length === 1 ? 'file' : 'files';
+    dropFeedback.textContent = `Skipped ${unsupportedFiles.length} unsupported ${fileText}: ${shownNames.join(', ')}${extraText}. Supported formats: ${SUPPORTED_FORMATS_LABEL}.`;
+    dropFeedback.classList.add('visible');
+}
+
+function clearDropFeedback() {
+    dropFeedback.textContent = '';
+    dropFeedback.classList.remove('visible');
 }
 
 function renderFileList() {
@@ -326,6 +357,7 @@ async function processAllFiles() {
 function clearAllFiles() {
     files.clear();
     worker.postMessage({ type: 'clear' });
+    clearDropFeedback();
     renderFileList();
     updateActions();
 }
@@ -544,6 +576,8 @@ function emptyMetadata(fileType) {
 const MIME_TYPES = {
     jpeg: 'image/jpeg',
     png: 'image/png',
+    webp: 'image/webp',
+    gif: 'image/gif',
     pdf: 'application/pdf'
 };
 

@@ -6,6 +6,8 @@ Privacy-focused metadata removal tool that runs entirely in your browser using W
 
 - **JPEG** - Removes JFIF/APP metadata, EXIF (camera, GPS, timestamps), XMP, IPTC, comments, and trailing appended data while preserving orientation and color rendering
 - **PNG** - Removes text, EXIF, timestamps, physical-resolution metadata, and unknown ancillary chunks while preserving transparency and color rendering
+- **WebP** - Removes EXIF, XMP, and unknown non-visual RIFF chunks while preserving image, alpha, animation, and color-profile chunks
+- **GIF** - Removes comments, XMP blocks, and unknown application extensions while preserving image frames, transparency controls, plain-text blocks, and animation loops
 - **PDF** - Removes info dictionaries, XMP metadata streams, document IDs, app-specific metadata, and embedded file attachments
 - **Verification** - Re-scans cleaned output before download and flags any remaining removable metadata
 
@@ -49,7 +51,9 @@ metadata-remover/
 │   │   ├── lib.rs      # Entry point, file detection
 │   │   ├── jpeg.rs     # JPEG metadata handling
 │   │   ├── png.rs      # PNG metadata handling
-│   │   └── pdf.rs      # PDF metadata handling
+│   │   ├── pdf.rs      # PDF metadata handling
+│   │   ├── webp.rs     # WebP metadata handling
+│   │   └── gif.rs      # GIF metadata handling
 │   └── Cargo.toml
 ├── web/                 # Static frontend
 │   ├── index.html
@@ -73,6 +77,8 @@ metadata-remover/
 |--------|---------|
 | JPEG | APP/JFIF segments, EXIF except minimal orientation, XMP, IPTC, Ducky, Comments, trailing appended data |
 | PNG | tEXt, zTXt, iTXt, eXIf, tIME, pHYs, unknown ancillary chunks |
+| WebP | EXIF chunks, XMP chunks, unknown non-visual RIFF chunks |
+| GIF | Comment extensions, XMP application extensions, unknown application extensions |
 | PDF | Info dictionary, XMP metadata streams, Document ID, PieceInfo, MarkInfo, embedded file attachments |
 
 ## Privacy

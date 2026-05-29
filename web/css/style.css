@@ -105,6 +105,18 @@ header h1 {
     color: var(--text-muted);
 }
 
+.drop-feedback {
+    min-height: 1.25rem;
+    margin-top: 0.75rem;
+    color: var(--warning);
+    font-size: 0.875rem;
+    text-align: center;
+}
+
+.drop-feedback:not(.visible) {
+    display: none;
+}
+
 #file-input {
     display: none;
 }
@@ -149,6 +161,16 @@ header h1 {
 .file-icon.png {
     background: rgba(76, 175, 80, 0.2);
     color: #4caf50;
+}
+
+.file-icon.webp {
+    background: rgba(0, 188, 212, 0.2);
+    color: #00bcd4;
+}
+
+.file-icon.gif {
+    background: rgba(156, 39, 176, 0.2);
+    color: #ba68c8;
 }
 
 .file-icon.pdf {

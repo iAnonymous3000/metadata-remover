@@ -1,9 +1,11 @@
-const CACHE_NAME = 'metadata-remover-v3';
+const CACHE_NAME = 'metadata-remover-v6';
 const ASSETS = [
     '.',
     'index.html',
     'manifest.webmanifest',
     'icon.svg',
+    'icon-192.png',
+    'icon-512.png',
     'css/style.css',
     'js/app.js',
     'js/worker.js',
@@ -34,29 +36,27 @@ self.addEventListener('fetch', (event) => {
     }
 
     if (event.request.mode === 'navigate' || event.request.headers.get('accept')?.includes('text/html')) {
-        event.respondWith(
-            fetch(event.request).then((response) => {
-                if (response.ok) {
-                    const copy = response.clone();
-                    caches.open(CACHE_NAME).then((cache) => cache.put(event.request, copy));
-                }
-                return response;
-            }).catch(() => caches.match(event.request).then((cached) => cached || caches.match(new URL('.', self.registration.scope).toString())))
-        );
+        event.respondWith(networkFirst(event.request, new URL('.', self.registration.scope).toString()));
         return;
     }
 
-    event.respondWith(
-        caches.match(event.request).then((cached) => {
-            if (cached) return cached;
-
-            return fetch(event.request).then((response) => {
-                if (response.ok) {
-                    const copy = response.clone();
-                    caches.open(CACHE_NAME).then((cache) => cache.put(event.request, copy));
-                }
-                return response;
-            });
-        })
-    );
+    event.respondWith(networkFirst(event.request));
 });
+
+function networkFirst(request, fallbackUrl = null) {
+    return fetch(request).then((response) => {
+        if (response.ok) {
+            const copy = response.clone();
+            caches.open(CACHE_NAME).then((cache) => cache.put(request, copy));
+        }
+        return response;
+    }).catch(() => cachedFallback(request, fallbackUrl));
+}
+
+function cachedFallback(request, fallbackUrl) {
+    return caches.match(request).then((cached) => {
+        if (cached) return cached;
+        if (!fallbackUrl) return Response.error();
+        return caches.match(fallbackUrl).then((fallback) => fallback || Response.error());
+    });
+}
