@@ -18,6 +18,8 @@ jobs:
   build:
     runs-on: ubuntu-latest
     env:
+      BINARYEN_VERSION: 129
+      BINARYEN_SHA256: 50b9fa62b9abea752da92ec57e0c555fee578760cd237c40107957715d2976ba
       WASM_PACK_VERSION: 0.14.0
     steps:
       - uses: actions/checkout@v4
@@ -28,7 +30,8 @@ jobs:
           node-version: 22
 
       - name: Setup Rust
-        uses: dtolnay/rust-toolchain@stable
+        id: toolchain
+        uses: dtolnay/rust-toolchain@1.94.1
         with:
           targets: wasm32-unknown-unknown
           components: clippy,rustfmt
@@ -40,9 +43,23 @@ jobs:
             ~/.cargo/registry
             ~/.cargo/git
             wasm/target
-          key: ${{ runner.os }}-cargo-${{ hashFiles('wasm/Cargo.lock') }}
+          key: ${{ runner.os }}-cargo-${{ steps.toolchain.outputs.cachekey }}-${{ hashFiles('wasm/Cargo.lock') }}
           restore-keys: |
             ${{ runner.os }}-cargo-
+
+      - name: Install Binaryen
+        run: |
+          set -euo pipefail
+          archive="$RUNNER_TEMP/binaryen.tar.gz"
+          install_dir="$RUNNER_TEMP/binaryen"
+          curl -fsSL \
+            "https://github.com/WebAssembly/binaryen/releases/download/version_${BINARYEN_VERSION}/binaryen-version_${BINARYEN_VERSION}-x86_64-linux.tar.gz" \
+            -o "$archive"
+          echo "${BINARYEN_SHA256}  $archive" | sha256sum -c -
+          mkdir -p "$install_dir"
+          tar -xzf "$archive" -C "$install_dir" --strip-components=1
+          echo "$install_dir/bin" >> "$GITHUB_PATH"
+          "$install_dir/bin/wasm-opt" --version
 
       - name: Install wasm-pack
         run: cargo install wasm-pack --version "$WASM_PACK_VERSION" --locked
@@ -65,6 +82,30 @@ jobs:
       - name: Audit Rust dependencies
         working-directory: ./wasm
         run: cargo audit --deny warnings
+
+      - name: Check deterministic WASM build
+        run: |
+          set -euo pipefail
+          scratch="$RUNNER_TEMP/wasm-determinism"
+          rm -rf "$scratch" web/wasm wasm/pkg
+          mkdir -p "$scratch"
+
+          npm run build
+          cp web/wasm/metadata_remover_bg.wasm "$scratch/first.wasm"
+
+          rm -rf web/wasm wasm/pkg
+          npm run build
+          cmp "$scratch/first.wasm" web/wasm/metadata_remover_bg.wasm
+
+          {
+            echo "### WASM determinism"
+            echo
+            echo "Built twice with rustc $(rustc --version), wasm-pack ${WASM_PACK_VERSION}, and Binaryen ${BINARYEN_VERSION}."
+            echo
+            echo '```'
+            sha256sum web/wasm/metadata_remover_bg.wasm
+            echo '```'
+          } >> "$GITHUB_STEP_SUMMARY"
 
       - name: Test JavaScript
         run: npm test

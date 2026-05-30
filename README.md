@@ -27,6 +27,10 @@ Live demo: https://ianonymous3000.github.io/metadata-remover/
 
 All processing happens client-side via WebAssembly in a browser worker. Files exist only in browser memory and are never transmitted anywhere.
 
+## Verifiable Build
+
+The deploy workflow builds the WASM bundle twice inside a pinned CI toolchain and fails if the two outputs differ byte-for-byte. It also publishes the CI-built `metadata_remover_bg.wasm` SHA-256 in the workflow summary. See [BUILDING.md](BUILDING.md) for the exact toolchain, reproduce steps, and the limits of the reproducibility claim.
+
 ## Deploy Your Own
 
 ### GitHub Pages (Automatic)
