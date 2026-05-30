@@ -15,7 +15,8 @@ Live demo: https://ianonymous3000.github.io/metadata-remover/
 - **GIF** - Removes comments, XMP blocks, and unknown application extensions while preserving image frames, transparency controls, plain-text blocks, and animation loops
 - **PDF** - Removes info dictionaries, XMP metadata streams, document IDs, app-specific metadata, and embedded file attachments
 - **DOCX** - Removes package properties, comments, review authors, revision IDs, and tracked-change metadata; accepted insertions are kept and deletions/comments are dropped
-- **XLSX/PPTX** - Removes package properties and flags comments or revision trails that this version does not remove
+- **PPTX** - Removes package properties, comments, comment authors, threaded comments, and modern author parts
+- **XLSX** - Removes package properties and flags comments or revision trails that this version does not remove
 - **Verification** - Re-scans cleaned output before download and flags any remaining removable metadata
 
 ## How It Works
@@ -96,7 +97,8 @@ metadata-remover/
 | GIF | Comment extensions, XMP application extensions, unknown application extensions |
 | PDF | Info dictionary, XMP metadata streams, Document ID, PieceInfo, MarkInfo, embedded file attachments |
 | DOCX | Package document properties, comment parts, comment relationships, review authors, tracked-change wrappers, deleted tracked text, revision IDs |
-| XLSX/PPTX | Package document properties; comments and revision trails are detected and reported as remaining review data |
+| PPTX | Package document properties, comment parts, threaded comment parts, comment authors, modern author parts, comment relationships |
+| XLSX | Package document properties; comments and revision trails are detected and reported as remaining review data |
 
 ## Privacy
 
@@ -110,7 +112,7 @@ metadata-remover/
 
 - JPEG orientation and color-transform/profile segments are preserved to avoid sideways images and color shifts.
 - Legacy binary Office files (`.doc`, `.xls`, `.ppt`) are not supported; save them as `.docx`, `.xlsx`, or `.pptx` first.
-- XLSX and PPTX comments/revision trails are surfaced when detected but are not removed in this release.
+- XLSX comments/revision trails are surfaced when detected but are not removed in this release.
 - This tool removes structural metadata; it does not detect steganographic content embedded in pixels or document bodies.
 
 ## License

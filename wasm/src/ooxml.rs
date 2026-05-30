@@ -169,9 +169,7 @@ pub fn remove_metadata(data: &[u8]) -> Result<Vec<u8>, String> {
     let mut changed = BTreeMap::new();
 
     for entry in &archive.entries {
-        if is_document_property_part(&entry.name)
-            || (kind == OoxmlKind::Docx && is_docx_removed_part(&entry.name))
-        {
+        if is_document_property_part(&entry.name) || is_removed_part_for_kind(&entry.name, kind) {
             removed.insert(entry.name.clone());
         }
     }
@@ -582,7 +580,7 @@ fn collect_pptx_review_metadata(
             entries.push(MetadataEntry {
                 category: "Review data".to_string(),
                 name: entry.name.clone(),
-                value: "Present, NOT removed by this version".to_string(),
+                value: "Present; removed during PPTX cleaning".to_string(),
             });
         }
     }
@@ -619,6 +617,14 @@ fn is_document_property_part(name: &str) -> bool {
     name.starts_with("docProps/")
 }
 
+fn is_removed_part_for_kind(name: &str, kind: OoxmlKind) -> bool {
+    match kind {
+        OoxmlKind::Docx => is_docx_removed_part(name),
+        OoxmlKind::Xlsx => false,
+        OoxmlKind::Pptx => is_pptx_removed_part(name),
+    }
+}
+
 fn is_docx_editable_part(name: &str) -> bool {
     name == "word/document.xml"
         || name == "word/settings.xml"
@@ -629,22 +635,30 @@ fn is_docx_editable_part(name: &str) -> bool {
 }
 
 fn is_docx_removed_part(name: &str) -> bool {
+    let name = name.to_ascii_lowercase();
     (name.starts_with("word/comments") && name.ends_with(".xml"))
         || name == "word/people.xml"
-        || name == "word/commentAuthors.xml"
+        || name == "word/commentauthors.xml"
 }
 
 fn is_xlsx_review_part(name: &str) -> bool {
+    let name = name.to_ascii_lowercase();
     (name.starts_with("xl/comments") && name.ends_with(".xml"))
-        || (name.starts_with("xl/threadedComments/") && name.ends_with(".xml"))
+        || (name.starts_with("xl/threadedcomments/") && name.ends_with(".xml"))
         || (name.starts_with("xl/revisions/") && name.ends_with(".xml"))
         || name == "xl/persons/person.xml"
 }
 
 fn is_pptx_review_part(name: &str) -> bool {
+    is_pptx_removed_part(name)
+}
+
+fn is_pptx_removed_part(name: &str) -> bool {
+    let name = name.to_ascii_lowercase();
     (name.starts_with("ppt/comments/") && name.ends_with(".xml"))
-        || name == "ppt/commentAuthors.xml"
-        || (name.starts_with("ppt/threadedComments/") && name.ends_with(".xml"))
+        || name == "ppt/commentauthors.xml"
+        || (name.starts_with("ppt/threadedcomments/") && name.ends_with(".xml"))
+        || name == "ppt/authors.xml"
 }
 
 fn clean_content_types(xml: &str, kind: OoxmlKind) -> String {
@@ -654,8 +668,7 @@ fn clean_content_types(xml: &str, kind: OoxmlKind) -> String {
             .trim_start_matches('/')
             .to_ascii_lowercase();
 
-        part_name.starts_with("docprops/")
-            || (kind == OoxmlKind::Docx && is_docx_removed_part(&part_name))
+        part_name.starts_with("docprops/") || is_removed_part_for_kind(&part_name, kind)
     })
 }
 
@@ -674,13 +687,31 @@ fn clean_relationships(xml: &str, kind: OoxmlKind) -> String {
             || rel_type.contains("metadata/core-properties")
             || rel_type.contains("extended-properties")
             || rel_type.contains("custom-properties")
-            || (kind == OoxmlKind::Docx
-                && (target.contains("comments")
-                    || target.ends_with("people.xml")
-                    || target.ends_with("commentauthors.xml")
-                    || rel_type.contains("/comments")
-                    || rel_type.contains("/people")))
+            || relationship_targets_removed_part(&target, &rel_type, kind)
     })
+}
+
+fn relationship_targets_removed_part(target: &str, rel_type: &str, kind: OoxmlKind) -> bool {
+    match kind {
+        OoxmlKind::Docx => {
+            target.contains("comments")
+                || target.ends_with("people.xml")
+                || target.ends_with("commentauthors.xml")
+                || rel_type.contains("/comments")
+                || rel_type.contains("/people")
+        }
+        OoxmlKind::Xlsx => false,
+        OoxmlKind::Pptx => {
+            target.contains("comments/")
+                || target.contains("threadedcomments/")
+                || target.ends_with("commentauthors.xml")
+                || target.ends_with("authors.xml")
+                || rel_type.contains("/comments")
+                || rel_type.contains("/threadedcomments")
+                || rel_type.contains("/commentauthors")
+                || rel_type.ends_with("/authors")
+        }
+    }
 }
 
 fn clean_word_content(xml: &str) -> String {
@@ -1450,6 +1481,68 @@ mod tests {
         ])
     }
 
+    fn dirty_pptx() -> Vec<u8> {
+        let content_types = br#"<?xml version="1.0" encoding="UTF-8"?>
+<Types xmlns="http://schemas.openxmlformats.org/package/2006/content-types">
+  <Override PartName="/docProps/core.xml" ContentType="application/vnd.openxmlformats-package.core-properties+xml"/>
+  <Override PartName="/ppt/presentation.xml" ContentType="application/vnd.openxmlformats-officedocument.presentationml.presentation.main+xml"/>
+  <Override PartName="/ppt/slides/slide1.xml" ContentType="application/vnd.openxmlformats-officedocument.presentationml.slide+xml"/>
+  <Override PartName="/ppt/comments/comment1.xml" ContentType="application/vnd.openxmlformats-officedocument.presentationml.comments+xml"/>
+  <Override PartName="/ppt/threadedComments/threadedComment1.xml" ContentType="application/vnd.ms-powerpoint.threadedcomments+xml"/>
+  <Override PartName="/ppt/commentAuthors.xml" ContentType="application/vnd.openxmlformats-officedocument.presentationml.commentAuthors+xml"/>
+  <Override PartName="/ppt/authors.xml" ContentType="application/vnd.ms-powerpoint.authors+xml"/>
+</Types>"#;
+        let root_rels = br#"<?xml version="1.0" encoding="UTF-8"?>
+<Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships">
+  <Relationship Id="rId1" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/officeDocument" Target="ppt/presentation.xml"/>
+  <Relationship Id="rId2" Type="http://schemas.openxmlformats.org/package/2006/relationships/metadata/core-properties" Target="docProps/core.xml"/>
+</Relationships>"#;
+        let presentation_rels = br#"<?xml version="1.0" encoding="UTF-8"?>
+<Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships">
+  <Relationship Id="rId1" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/slide" Target="slides/slide1.xml"/>
+  <Relationship Id="rId2" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/commentAuthors" Target="commentAuthors.xml"/>
+  <Relationship Id="rId3" Type="http://schemas.microsoft.com/office/2018/10/relationships/authors" Target="authors.xml"/>
+</Relationships>"#;
+        let slide_rels = br#"<?xml version="1.0" encoding="UTF-8"?>
+<Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships">
+  <Relationship Id="rId4" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/comments" Target="../comments/comment1.xml"/>
+  <Relationship Id="rId5" Type="http://schemas.microsoft.com/office/2017/10/relationships/threadedComments" Target="../threadedComments/threadedComment1.xml"/>
+</Relationships>"#;
+        let core = br#"<?xml version="1.0" encoding="UTF-8"?>
+<cp:coreProperties xmlns:cp="http://schemas.openxmlformats.org/package/2006/metadata/core-properties" xmlns:dc="http://purl.org/dc/elements/1.1/">
+  <dc:creator>Presenter Person</dc:creator>
+</cp:coreProperties>"#;
+        let presentation = br#"<?xml version="1.0" encoding="UTF-8"?>
+<p:presentation xmlns:p="http://schemas.openxmlformats.org/presentationml/2006/main"/>"#;
+        let slide = br#"<?xml version="1.0" encoding="UTF-8"?>
+<p:sld xmlns:p="http://schemas.openxmlformats.org/presentationml/2006/main"><p:cSld><p:spTree><p:sp><p:txBody><a:p xmlns:a="http://schemas.openxmlformats.org/drawingml/2006/main"><a:r><a:t>Slide text</a:t></a:r></a:p></p:txBody></p:sp></p:spTree></p:cSld></p:sld>"#;
+        let comments = br#"<?xml version="1.0" encoding="UTF-8"?>
+<p:cmLst xmlns:p="http://schemas.openxmlformats.org/presentationml/2006/main"><p:cm authorId="0" text="Secret slide comment"/></p:cmLst>"#;
+        let threaded_comments = br#"<?xml version="1.0" encoding="UTF-8"?>
+<p188:threadedComment xmlns:p188="http://schemas.microsoft.com/office/powerpoint/2018/8/main">Thread secret</p188:threadedComment>"#;
+        let comment_authors = br#"<?xml version="1.0" encoding="UTF-8"?>
+<p:cmAuthorLst xmlns:p="http://schemas.openxmlformats.org/presentationml/2006/main"><p:cmAuthor name="Bob Reviewer"/></p:cmAuthorLst>"#;
+        let authors = br#"<?xml version="1.0" encoding="UTF-8"?>
+<p188:authorLst xmlns:p188="http://schemas.microsoft.com/office/powerpoint/2018/8/main"><p188:author name="Modern Author"/></p188:authorLst>"#;
+
+        stored_zip(&[
+            ("[Content_Types].xml", content_types),
+            ("_rels/.rels", root_rels),
+            ("docProps/core.xml", core),
+            ("ppt/presentation.xml", presentation),
+            ("ppt/_rels/presentation.xml.rels", presentation_rels),
+            ("ppt/slides/slide1.xml", slide),
+            ("ppt/slides/_rels/slide1.xml.rels", slide_rels),
+            ("ppt/comments/comment1.xml", comments),
+            (
+                "ppt/threadedComments/threadedComment1.xml",
+                threaded_comments,
+            ),
+            ("ppt/commentAuthors.xml", comment_authors),
+            ("ppt/authors.xml", authors),
+        ])
+    }
+
     #[test]
     fn test_detects_docx_and_extracts_properties_and_review_data() {
         let input = dirty_docx();
@@ -1503,6 +1596,98 @@ mod tests {
         }
 
         assert!(cleaned_text.contains("Keep me"));
+        validate(&cleaned).unwrap();
+
+        let cleaned_info = extract_metadata(&cleaned);
+        assert!(
+            cleaned_info.metadata_found.is_empty(),
+            "remaining metadata: {:?}",
+            cleaned_info.metadata_found
+        );
+    }
+
+    #[test]
+    fn test_remove_metadata_strips_pptx_properties_comments_and_author_parts() {
+        let input = dirty_pptx();
+
+        assert_eq!(detect_file_type(&input), Some("pptx"));
+        let info = extract_metadata(&input);
+        assert!(info
+            .metadata_found
+            .iter()
+            .any(|entry| entry.name == "ppt/comments/comment1.xml"));
+        assert!(info
+            .metadata_found
+            .iter()
+            .any(|entry| entry.name == "ppt/authors.xml"));
+        assert!(info
+            .metadata_found
+            .iter()
+            .any(|entry| entry.value.contains("removed during PPTX cleaning")));
+
+        let cleaned = remove_metadata(&input).unwrap();
+        let archive = parse_archive(&cleaned).unwrap();
+        let cleaned_text = String::from_utf8_lossy(&cleaned);
+
+        for removed_name in [
+            "docProps/core.xml",
+            "ppt/comments/comment1.xml",
+            "ppt/threadedComments/threadedComment1.xml",
+            "ppt/commentAuthors.xml",
+            "ppt/authors.xml",
+        ] {
+            assert!(
+                archive.entry(removed_name).is_none(),
+                "cleaned PPTX still contains ZIP entry {removed_name}"
+            );
+            assert!(
+                !cleaned_text.contains(removed_name),
+                "cleaned PPTX still references {removed_name}"
+            );
+        }
+
+        for secret in [
+            "Presenter Person",
+            "Secret slide comment",
+            "Thread secret",
+            "Bob Reviewer",
+            "Modern Author",
+        ] {
+            assert!(
+                !cleaned_text.contains(secret),
+                "cleaned PPTX still contains {secret}"
+            );
+        }
+
+        let content_types = archive
+            .read_xml("[Content_Types].xml")
+            .unwrap()
+            .expect("content types");
+        let presentation_rels = archive
+            .read_xml("ppt/_rels/presentation.xml.rels")
+            .unwrap()
+            .expect("presentation rels");
+        let slide_rels = archive
+            .read_xml("ppt/slides/_rels/slide1.xml.rels")
+            .unwrap()
+            .expect("slide rels");
+
+        for xml in [&content_types, &presentation_rels, &slide_rels] {
+            for removed_reference in [
+                "comment",
+                "threadedComment",
+                "commentAuthors",
+                "authors.xml",
+                "docProps",
+            ] {
+                assert!(
+                    !xml.contains(removed_reference),
+                    "cleaned PPTX XML still contains {removed_reference}: {xml}"
+                );
+            }
+        }
+
+        assert!(cleaned_text.contains("Slide text"));
         validate(&cleaned).unwrap();
 
         let cleaned_info = extract_metadata(&cleaned);
