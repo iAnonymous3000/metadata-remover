@@ -301,9 +301,9 @@ pub fn extract_metadata(data: &[u8]) -> MetadataInfo {
 
         match marker {
             APP1 => {
-                total_bytes += length + 2;
                 if segment_data.starts_with(b"Exif\0\0") {
                     if !is_minimal_orientation_exif(segment_data) {
+                        total_bytes += length + 2;
                         entries.push(MetadataEntry {
                             category: "EXIF".to_string(),
                             name: "EXIF Data".to_string(),
@@ -314,9 +314,17 @@ pub fn extract_metadata(data: &[u8]) -> MetadataInfo {
                 } else if segment_data.starts_with(b"http://ns.adobe.com/xap/")
                     || segment_data.starts_with(b"<?xpacket")
                 {
+                    total_bytes += length + 2;
                     entries.push(MetadataEntry {
                         category: "XMP".to_string(),
                         name: "XMP Data".to_string(),
+                        value: format!("{} bytes", length - 2),
+                    });
+                } else {
+                    total_bytes += length + 2;
+                    entries.push(MetadataEntry {
+                        category: "APP1".to_string(),
+                        name: "APP1 Segment".to_string(),
                         value: format!("{} bytes", length - 2),
                     });
                 }
@@ -337,8 +345,8 @@ pub fn extract_metadata(data: &[u8]) -> MetadataInfo {
                 });
             }
             APP2 => {
-                total_bytes += length + 2;
                 if !segment_data.starts_with(b"ICC_PROFILE") {
+                    total_bytes += length + 2;
                     entries.push(MetadataEntry {
                         category: "APP2".to_string(),
                         name: "APP2 Segment".to_string(),
@@ -360,6 +368,12 @@ pub fn extract_metadata(data: &[u8]) -> MetadataInfo {
                     entries.push(MetadataEntry {
                         category: "IPTC".to_string(),
                         name: "Photoshop/IPTC Data".to_string(),
+                        value: format!("{} bytes", length - 2),
+                    });
+                } else {
+                    entries.push(MetadataEntry {
+                        category: "APP13".to_string(),
+                        name: "APP13 Segment".to_string(),
                         value: format!("{} bytes", length - 2),
                     });
                 }
@@ -510,6 +524,27 @@ fn parse_exif_entries(exif_data: &[u8], entries: &mut Vec<MetadataEntry>) {
     }
 }
 
+fn scan_data_end(data: &[u8], scan_start: usize) -> Result<(usize, bool), String> {
+    let mut pos = scan_start;
+    while pos + 1 < data.len() {
+        if data[pos] != MARKER_PREFIX {
+            pos += 1;
+            continue;
+        }
+
+        let marker = data[pos + 1];
+        match marker {
+            0x00 => pos += 2,
+            0xFF => pos += 1,
+            0xD0..=0xD7 => pos += 2,
+            EOI => return Ok((pos + 2, true)),
+            _ => return Ok((pos, false)),
+        }
+    }
+
+    Err("JPEG missing EOI marker".to_string())
+}
+
 fn copy_scan_segment(
     data: &[u8],
     offset: usize,
@@ -523,31 +558,9 @@ fn copy_scan_segment(
     let scan_start = offset + 2 + length;
     result.extend_from_slice(&data[offset..scan_start]);
 
-    let mut pos = scan_start;
-    while pos + 1 < data.len() {
-        if data[pos] != MARKER_PREFIX {
-            pos += 1;
-            continue;
-        }
-
-        let marker = data[pos + 1];
-        match marker {
-            0x00 => pos += 2,
-            0xFF => pos += 1,
-            0xD0..=0xD7 => pos += 2,
-            EOI => {
-                result.extend_from_slice(&data[scan_start..pos + 2]);
-                return Ok((pos + 2, true));
-            }
-            _ => {
-                result.extend_from_slice(&data[scan_start..pos]);
-                return Ok((pos, false));
-            }
-        }
-    }
-
-    result.extend_from_slice(&data[scan_start..]);
-    Ok((data.len(), true))
+    let (next_offset, reached_eoi) = scan_data_end(data, scan_start)?;
+    result.extend_from_slice(&data[scan_start..next_offset]);
+    Ok((next_offset, reached_eoi))
 }
 
 pub fn validate(data: &[u8]) -> Result<(), String> {
@@ -591,7 +604,13 @@ pub fn validate(data: &[u8]) -> Result<(), String> {
         }
 
         if marker == SOS {
-            return Ok(());
+            let scan_start = offset + 2 + length;
+            let (next_offset, reached_eoi) = scan_data_end(data, scan_start)?;
+            if reached_eoi {
+                return Ok(());
+            }
+            offset = next_offset;
+            continue;
         }
 
         offset += 2 + length;
@@ -814,6 +833,70 @@ mod tests {
         let data = vec![MARKER_PREFIX, SOI, MARKER_PREFIX, COM, 0, 20, b'x'];
 
         assert_eq!(validate(&data), Err("Invalid segment length".to_string()));
+    }
+
+    #[test]
+    fn test_validate_rejects_truncated_scan_without_eoi() {
+        let data = vec![
+            MARKER_PREFIX,
+            SOI,
+            MARKER_PREFIX,
+            SOS,
+            0,
+            4,
+            0x03,
+            0x00,
+            0x11,
+            0x22,
+        ];
+
+        assert_eq!(validate(&data), Err("JPEG missing EOI marker".to_string()));
+        assert_eq!(
+            remove_metadata(&data),
+            Err("JPEG missing EOI marker".to_string())
+        );
+    }
+
+    #[test]
+    fn test_extract_metadata_does_not_count_preserved_color_segments() {
+        let mut data = vec![MARKER_PREFIX, SOI];
+        let orientation = build_minimal_orientation_exif(6);
+        data.extend_from_slice(&[MARKER_PREFIX, APP1]);
+        data.extend_from_slice(&((orientation.len() + 2) as u16).to_be_bytes());
+        data.extend_from_slice(&orientation);
+        data.extend_from_slice(&[MARKER_PREFIX, APP2, 0, 16]);
+        data.extend_from_slice(b"ICC_PROFILE\0\x01\x01");
+        data.extend_from_slice(&[MARKER_PREFIX, APP14, 0, 7]);
+        data.extend_from_slice(b"Adobe");
+        data.extend_from_slice(&[MARKER_PREFIX, EOI]);
+
+        let info = extract_metadata(&data);
+
+        assert!(info.metadata_found.is_empty());
+        assert_eq!(info.total_metadata_bytes, 0);
+    }
+
+    #[test]
+    fn test_extract_metadata_reports_generic_stripped_app_segments() {
+        let mut data = vec![MARKER_PREFIX, SOI];
+        data.extend_from_slice(&[MARKER_PREFIX, APP1, 0, 6]);
+        data.extend_from_slice(b"ABCD");
+        data.extend_from_slice(&[MARKER_PREFIX, APP13, 0, 6]);
+        data.extend_from_slice(b"DATA");
+        data.extend_from_slice(&[MARKER_PREFIX, EOI]);
+
+        let info = extract_metadata(&data);
+
+        assert_eq!(info.metadata_found.len(), 2);
+        assert!(info
+            .metadata_found
+            .iter()
+            .any(|entry| entry.name == "APP1 Segment"));
+        assert!(info
+            .metadata_found
+            .iter()
+            .any(|entry| entry.name == "APP13 Segment"));
+        assert_eq!(info.total_metadata_bytes, 16);
     }
 
     #[test]

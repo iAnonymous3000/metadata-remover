@@ -80,7 +80,7 @@ metadata-remover/
 - Worker-based processing keeps parsing and cleaning off the main UI thread
 - Per-file size limit prevents accidental browser memory exhaustion
 - CSP limits scripts, workers, network fetches, forms, and embedded objects to the local app origin
-- Size-conscious WASM binary (~420KB, ~170KB gzipped over the wire) built with `opt-level=z`, LTO, and panic=abort
+- Size-conscious WASM binary (~380 KiB, ~176 KiB gzipped over the wire) built with `opt-level=z`, `wasm-opt -Oz`, LTO, and panic=abort
 
 ## Supported Metadata Types
 

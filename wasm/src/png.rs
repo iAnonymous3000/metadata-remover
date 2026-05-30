@@ -186,6 +186,19 @@ pub fn extract_metadata(data: &[u8]) -> MetadataInfo {
             }
         }
 
+        if chunk_type == b"IEND" {
+            let trailing_len = data.len().saturating_sub(chunk_end);
+            if trailing_len > 0 {
+                total_bytes += trailing_len;
+                entries.push(MetadataEntry {
+                    category: "Trailing".to_string(),
+                    name: "Trailing Data".to_string(),
+                    value: format!("{} bytes", trailing_len),
+                });
+            }
+            break;
+        }
+
         // Move to next chunk (length + type + data + CRC)
         offset = chunk_end;
     }
@@ -347,5 +360,24 @@ mod tests {
         assert!(cleaned.windows(4).any(|w| w == b"fdAT"));
         assert!(!cleaned.windows(4).any(|w| w == b"tEXt"));
         assert!(!cleaned.windows(b"Secret".len()).any(|w| w == b"Secret"));
+    }
+
+    #[test]
+    fn test_extract_and_remove_metadata_handle_trailing_data_after_iend() {
+        let mut png = PNG_SIGNATURE.to_vec();
+        png.extend_from_slice(&chunk(b"IHDR", &[0; 13]));
+        png.extend_from_slice(&chunk(b"IDAT", &[1, 2, 3]));
+        png.extend_from_slice(&chunk(b"IEND", &[]));
+        png.extend_from_slice(b"SECRET_TRAILING_BYTES");
+
+        let info = extract_metadata(&png);
+        let cleaned = remove_metadata(&png).unwrap();
+
+        assert!(info
+            .metadata_found
+            .iter()
+            .any(|entry| entry.category == "Trailing"));
+        assert!(!cleaned.windows(b"SECRET".len()).any(|w| w == b"SECRET"));
+        assert!(extract_metadata(&cleaned).metadata_found.is_empty());
     }
 }

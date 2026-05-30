@@ -32,6 +32,13 @@ pub struct MetadataEntry {
     pub value: String,
 }
 
+#[derive(Serialize, Deserialize, Debug)]
+#[serde(rename_all = "camelCase")]
+pub struct AnalyzeResult {
+    pub file_type: String,
+    pub metadata: MetadataInfo,
+}
+
 #[wasm_bindgen]
 pub fn detect_file_type(data: &[u8]) -> String {
     if data.len() >= JPEG_MAGIC.len() && data[..JPEG_MAGIC.len()] == JPEG_MAGIC {
@@ -59,10 +66,8 @@ pub fn detect_file_type(data: &[u8]) -> String {
     }
 }
 
-pub fn extract_metadata_info(data: &[u8]) -> MetadataInfo {
-    let file_type = detect_file_type(data);
-
-    match file_type.as_str() {
+fn extract_detected_metadata(data: &[u8], file_type: &str) -> MetadataInfo {
+    match file_type {
         "jpeg" => jpeg::extract_metadata(data),
         "png" => png::extract_metadata(data),
         "pdf" => pdf::extract_metadata(data),
@@ -70,11 +75,16 @@ pub fn extract_metadata_info(data: &[u8]) -> MetadataInfo {
         "gif" => gif::extract_metadata(data),
         "docx" | "xlsx" | "pptx" => ooxml::extract_metadata(data),
         _ => MetadataInfo {
-            file_type,
+            file_type: file_type.to_string(),
             metadata_found: vec![],
             total_metadata_bytes: 0,
         },
     }
+}
+
+pub fn extract_metadata_info(data: &[u8]) -> MetadataInfo {
+    let file_type = detect_file_type(data);
+    extract_detected_metadata(data, &file_type)
 }
 
 #[wasm_bindgen]
@@ -83,19 +93,22 @@ pub fn extract_metadata(data: &[u8]) -> JsValue {
     serde_wasm_bindgen::to_value(&result).unwrap_or(JsValue::NULL)
 }
 
-pub fn validate_file_bytes(data: &[u8]) -> Result<(), String> {
-    let file_type = detect_file_type(data);
-
-    match file_type.as_str() {
+fn validate_detected_file(data: &[u8], file_type: &str) -> Result<(), String> {
+    match file_type {
         "jpeg" => jpeg::validate(data),
         "png" => png::validate(data),
         "pdf" => pdf::validate(data),
         "webp" => webp::validate(data),
         "gif" => gif::validate(data),
         "docx" | "xlsx" | "pptx" => ooxml::validate(data),
-        "office-legacy" => Err("Legacy binary Office files (.doc, .xls, .ppt) are not supported. Save the file as .docx, .xlsx, or .pptx first.".to_string()),
+        "office-legacy" => Err(legacy_office_error()),
         _ => Err("Unsupported file type".to_string()),
     }
+}
+
+pub fn validate_file_bytes(data: &[u8]) -> Result<(), String> {
+    let file_type = detect_file_type(data);
+    validate_detected_file(data, &file_type)
 }
 
 #[wasm_bindgen]
@@ -103,33 +116,95 @@ pub fn validate_file(data: &[u8]) -> Result<(), JsValue> {
     validate_file_bytes(data).map_err(|error| JsValue::from_str(&error))
 }
 
-pub fn remove_metadata_bytes(data: &[u8]) -> Result<Vec<u8>, String> {
-    let file_type = detect_file_type(data);
-
-    match file_type.as_str() {
+fn remove_detected_metadata(data: &[u8], file_type: &str) -> Result<Vec<u8>, String> {
+    match file_type {
         "jpeg" => jpeg::remove_metadata(data),
         "png" => png::remove_metadata(data),
         "pdf" => pdf::remove_metadata(data),
         "webp" => webp::remove_metadata(data),
         "gif" => gif::remove_metadata(data),
         "docx" | "xlsx" | "pptx" => ooxml::remove_metadata(data),
-        "office-legacy" => Err("Legacy binary Office files (.doc, .xls, .ppt) are not supported. Save the file as .docx, .xlsx, or .pptx first.".to_string()),
+        "office-legacy" => Err(legacy_office_error()),
         _ => Err("Unsupported file type".to_string()),
     }
 }
 
+pub fn remove_metadata_bytes(data: &[u8]) -> Result<Vec<u8>, String> {
+    let file_type = detect_file_type(data);
+    remove_detected_metadata(data, &file_type)
+}
+
+#[wasm_bindgen]
+pub fn analyze_file(data: &[u8]) -> Result<JsValue, JsValue> {
+    let file_type = detect_file_type(data);
+    if let Err(error) = validate_detected_file(data, &file_type) {
+        return Err(wasm_file_error(&file_type, &error));
+    }
+
+    let metadata = extract_detected_metadata(data, &file_type);
+    serialize_js(&AnalyzeResult {
+        file_type,
+        metadata,
+    })
+}
+
+#[wasm_bindgen]
+pub fn process_file(data: &[u8]) -> Result<JsValue, JsValue> {
+    let file_type = detect_file_type(data);
+    let cleaned = remove_detected_metadata(data, &file_type)
+        .map_err(|error| wasm_file_error(&file_type, &error))?;
+    let verification = extract_detected_metadata(&cleaned, &file_type);
+
+    let result = js_sys::Object::new();
+    let cleaned_array = uint8_array_from_bytes(&cleaned);
+    let verification_value = serialize_js(&verification)?;
+    js_sys::Reflect::set(
+        &result,
+        &JsValue::from_str("cleaned"),
+        cleaned_array.as_ref(),
+    )?;
+    js_sys::Reflect::set(
+        &result,
+        &JsValue::from_str("verification"),
+        &verification_value,
+    )?;
+    Ok(result.into())
+}
+
 #[wasm_bindgen]
 pub fn remove_metadata(data: &[u8]) -> Result<js_sys::Uint8Array, JsValue> {
-    let cleaned = remove_metadata_bytes(data);
+    remove_metadata_bytes(data)
+        .map(|bytes| uint8_array_from_bytes(&bytes))
+        .map_err(|error| JsValue::from_str(&error))
+}
 
-    match cleaned {
-        Ok(bytes) => {
-            let arr = js_sys::Uint8Array::new_with_length(bytes.len() as u32);
-            arr.copy_from(&bytes);
-            Ok(arr)
-        }
-        Err(e) => Err(JsValue::from_str(&e)),
-    }
+fn uint8_array_from_bytes(bytes: &[u8]) -> js_sys::Uint8Array {
+    let arr = js_sys::Uint8Array::new_with_length(bytes.len() as u32);
+    arr.copy_from(bytes);
+    arr
+}
+
+fn legacy_office_error() -> String {
+    "Legacy binary Office files (.doc, .xls, .ppt) are not supported. Save the file as .docx, .xlsx, or .pptx first.".to_string()
+}
+
+fn serialize_js<T: Serialize>(value: &T) -> Result<JsValue, JsValue> {
+    serde_wasm_bindgen::to_value(value).map_err(|error| JsValue::from_str(&error.to_string()))
+}
+
+fn wasm_file_error(file_type: &str, error: &str) -> JsValue {
+    let result = js_sys::Object::new();
+    let _ = js_sys::Reflect::set(
+        &result,
+        &JsValue::from_str("fileType"),
+        &JsValue::from_str(file_type),
+    );
+    let _ = js_sys::Reflect::set(
+        &result,
+        &JsValue::from_str("error"),
+        &JsValue::from_str(error),
+    );
+    result.into()
 }
 
 /// Returns WASM module version for cache busting

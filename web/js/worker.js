@@ -62,27 +62,22 @@ async function handleMessage(message) {
 async function analyzeFile(message) {
     const buffer = await message.file.arrayBuffer();
     const data = new Uint8Array(buffer);
-    const fileType = wasmModule.detect_file_type(data);
 
-    if (fileType === 'unknown') {
-        throw new Error('Unsupported or invalid file type.');
-    }
-
+    let result;
     try {
-        wasmModule.validate_file(data);
+        result = wasmModule.analyze_file(data);
     } catch (e) {
-        throw fileError(fileType, e);
+        throw fileError(e?.fileType || 'unknown', e);
     }
 
-    const metadata = wasmModule.extract_metadata(data);
     fileData.set(message.id, data);
 
     self.postMessage({
         type: 'analyzed',
         requestId: message.requestId,
         id: message.id,
-        fileType,
-        metadata
+        fileType: result.fileType,
+        metadata: result.metadata
     });
 }
 
@@ -98,17 +93,17 @@ async function processFile(message) {
         throw new Error('File data is no longer available.');
     }
 
-    const fileType = wasmModule.detect_file_type(data);
-    let cleaned;
+    let result;
     try {
-        cleaned = wasmModule.remove_metadata(data);
+        result = wasmModule.process_file(data);
     } catch (e) {
-        throw fileError(fileType, e);
+        throw fileError(e?.fileType || wasmModule.detect_file_type(data), e);
     }
 
-    const verification = wasmModule.extract_metadata(cleaned);
+    const { cleaned, verification } = result;
     const cleanedBuffer = cleaned.buffer.slice(cleaned.byteOffset, cleaned.byteOffset + cleaned.byteLength);
 
+    fileData.delete(message.id);
     self.postMessage({
         type: 'processed',
         requestId: message.requestId,
@@ -121,6 +116,10 @@ async function processFile(message) {
 function errorToString(error) {
     if (error instanceof Error && error.message) {
         return error.message;
+    }
+    if (error && typeof error === 'object') {
+        if (typeof error.error === 'string') return error.error;
+        if (typeof error.message === 'string') return error.message;
     }
     return String(error || 'Unknown error');
 }

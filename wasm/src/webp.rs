@@ -6,6 +6,10 @@ const WEBP_MAGIC: &[u8; 4] = b"WEBP";
 const VP8X_FLAG_EXIF: u8 = 0x08;
 const VP8X_FLAG_XMP: u8 = 0x04;
 
+fn is_webp(data: &[u8]) -> bool {
+    data.len() >= 12 && &data[0..4] == RIFF_MAGIC && &data[8..12] == WEBP_MAGIC
+}
+
 fn read_u32_le(data: &[u8], offset: usize) -> Option<u32> {
     let bytes = data.get(offset..offset + 4)?;
     Some(
@@ -16,13 +20,34 @@ fn read_u32_le(data: &[u8], offset: usize) -> Option<u32> {
     )
 }
 
-fn checked_chunk_bounds(offset: usize, data: &[u8]) -> Option<(usize, usize, usize)> {
+fn declared_riff_end(data: &[u8]) -> Result<usize, String> {
+    if !is_webp(data) {
+        return Err("Not a valid WebP file".to_string());
+    }
+
+    let riff_size =
+        read_u32_le(data, 4).ok_or_else(|| "Not a valid WebP file".to_string())? as usize;
+    if riff_size < WEBP_MAGIC.len() {
+        return Err("Invalid WebP RIFF size".to_string());
+    }
+
+    let riff_end = 8usize
+        .checked_add(riff_size)
+        .ok_or_else(|| "Invalid WebP RIFF size".to_string())?;
+    if riff_end > data.len() {
+        return Err("Truncated WebP RIFF data".to_string());
+    }
+
+    Ok(riff_end)
+}
+
+fn checked_chunk_bounds(offset: usize, data: &[u8], limit: usize) -> Option<(usize, usize, usize)> {
     let size = read_u32_le(data, offset + 4)? as usize;
     let data_start = offset.checked_add(8)?;
     let data_end = data_start.checked_add(size)?;
     let padded_end = data_end.checked_add(size & 1)?;
 
-    if padded_end <= data.len() {
+    if padded_end <= limit && padded_end <= data.len() {
         Some((data_start, data_end, padded_end))
     } else {
         None
@@ -38,6 +63,10 @@ fn is_visual_chunk(chunk_type: &[u8]) -> bool {
         chunk_type,
         b"VP8 " | b"VP8L" | b"VP8X" | b"ALPH" | b"ANIM" | b"ANMF" | b"ICCP"
     )
+}
+
+fn is_image_data_chunk(chunk_type: &[u8]) -> bool {
+    matches!(chunk_type, b"VP8 " | b"VP8L" | b"ANMF")
 }
 
 fn write_chunk(result: &mut Vec<u8>, chunk_type: &[u8], chunk_data: &[u8]) -> Result<(), String> {
@@ -56,7 +85,7 @@ pub fn extract_metadata(data: &[u8]) -> MetadataInfo {
     let mut entries = Vec::new();
     let mut total_bytes = 0;
 
-    if data.len() < 12 || &data[0..4] != RIFF_MAGIC || &data[8..12] != WEBP_MAGIC {
+    if !is_webp(data) {
         return MetadataInfo {
             file_type: "webp".to_string(),
             metadata_found: entries,
@@ -64,10 +93,12 @@ pub fn extract_metadata(data: &[u8]) -> MetadataInfo {
         };
     }
 
+    let riff_end = declared_riff_end(data).unwrap_or(data.len());
     let mut offset = 12;
-    while offset + 8 <= data.len() {
+    while offset + 8 <= riff_end {
         let chunk_type = &data[offset..offset + 4];
-        let Some((data_start, data_end, padded_end)) = checked_chunk_bounds(offset, data) else {
+        let Some((data_start, data_end, padded_end)) = checked_chunk_bounds(offset, data, riff_end)
+        else {
             break;
         };
         let chunk_data_len = data_end - data_start;
@@ -104,8 +135,18 @@ pub fn extract_metadata(data: &[u8]) -> MetadataInfo {
         offset = padded_end;
     }
 
-    if offset < data.len() {
-        let trailing_len = data.len() - offset;
+    if offset < riff_end {
+        let trailing_len = riff_end - offset;
+        total_bytes += trailing_len;
+        entries.push(MetadataEntry {
+            category: "Trailing".to_string(),
+            name: "Malformed RIFF Data".to_string(),
+            value: format!("{} bytes", trailing_len),
+        });
+    }
+
+    if riff_end < data.len() {
+        let trailing_len = data.len() - riff_end;
         total_bytes += trailing_len;
         entries.push(MetadataEntry {
             category: "Trailing".to_string(),
@@ -122,9 +163,7 @@ pub fn extract_metadata(data: &[u8]) -> MetadataInfo {
 }
 
 pub fn remove_metadata(data: &[u8]) -> Result<Vec<u8>, String> {
-    if data.len() < 12 || &data[0..4] != RIFF_MAGIC || &data[8..12] != WEBP_MAGIC {
-        return Err("Not a valid WebP file".to_string());
-    }
+    let riff_end = declared_riff_end(data)?;
 
     let mut result = Vec::with_capacity(data.len());
     result.extend_from_slice(RIFF_MAGIC);
@@ -132,12 +171,15 @@ pub fn remove_metadata(data: &[u8]) -> Result<Vec<u8>, String> {
     result.extend_from_slice(WEBP_MAGIC);
 
     let mut offset = 12;
-    while offset + 8 <= data.len() {
+    let mut has_image_data = false;
+    while offset + 8 <= riff_end {
         let chunk_type = &data[offset..offset + 4];
-        let Some((data_start, data_end, padded_end)) = checked_chunk_bounds(offset, data) else {
-            break;
+        let Some((data_start, data_end, padded_end)) = checked_chunk_bounds(offset, data, riff_end)
+        else {
+            return Err("Invalid WebP chunk length".to_string());
         };
         let chunk_data = &data[data_start..data_end];
+        has_image_data |= is_image_data_chunk(chunk_type);
 
         if is_visual_chunk(chunk_type) {
             if chunk_type == b"VP8X" && !chunk_data.is_empty() {
@@ -152,6 +194,13 @@ pub fn remove_metadata(data: &[u8]) -> Result<Vec<u8>, String> {
         offset = padded_end;
     }
 
+    if offset != riff_end {
+        return Err("Invalid WebP chunk length".to_string());
+    }
+    if !has_image_data {
+        return Err("WebP missing image data chunk".to_string());
+    }
+
     let riff_size = u32::try_from(result.len().saturating_sub(8))
         .map_err(|_| "Cleaned WebP file is too large".to_string())?;
     result[4..8].copy_from_slice(&riff_size.to_le_bytes());
@@ -160,16 +209,24 @@ pub fn remove_metadata(data: &[u8]) -> Result<Vec<u8>, String> {
 }
 
 pub fn validate(data: &[u8]) -> Result<(), String> {
-    if data.len() < 12 || &data[0..4] != RIFF_MAGIC || &data[8..12] != WEBP_MAGIC {
-        return Err("Not a valid WebP file".to_string());
-    }
+    let riff_end = declared_riff_end(data)?;
 
     let mut offset = 12;
-    while offset + 8 <= data.len() {
-        let Some((_, _, padded_end)) = checked_chunk_bounds(offset, data) else {
-            break;
+    let mut has_image_data = false;
+    while offset + 8 <= riff_end {
+        let chunk_type = &data[offset..offset + 4];
+        let Some((_, _, padded_end)) = checked_chunk_bounds(offset, data, riff_end) else {
+            return Err("Invalid WebP chunk length".to_string());
         };
+        has_image_data |= is_image_data_chunk(chunk_type);
         offset = padded_end;
+    }
+
+    if offset != riff_end {
+        return Err("Invalid WebP chunk length".to_string());
+    }
+    if !has_image_data {
+        return Err("WebP missing image data chunk".to_string());
     }
 
     Ok(())
@@ -303,5 +360,45 @@ mod tests {
         assert_eq!(extract_metadata(&input).metadata_found.len(), 1);
         assert!(info.metadata_found.is_empty());
         assert!(!cleaned.windows(b"TRACKING".len()).any(|w| w == b"TRACKING"));
+    }
+
+    #[test]
+    fn test_validate_rejects_webp_without_image_data() {
+        let input = webp(&[chunk(b"EXIF", b"camera")]);
+
+        assert_eq!(
+            validate(&input),
+            Err("WebP missing image data chunk".to_string())
+        );
+        assert_eq!(
+            remove_metadata(&input),
+            Err("WebP missing image data chunk".to_string())
+        );
+    }
+
+    #[test]
+    fn test_validate_rejects_truncated_declared_riff_data() {
+        let mut input = Vec::new();
+        input.extend_from_slice(RIFF_MAGIC);
+        input.extend_from_slice(&20u32.to_le_bytes());
+        input.extend_from_slice(WEBP_MAGIC);
+        input.extend_from_slice(b"VP8 ");
+
+        assert_eq!(
+            validate(&input),
+            Err("Truncated WebP RIFF data".to_string())
+        );
+    }
+
+    #[test]
+    fn test_extract_metadata_uses_declared_riff_boundary_for_trailing_data() {
+        let mut input = webp(&[chunk(b"VP8 ", b"image")]);
+        input.extend_from_slice(&chunk(b"EXIF", b"camera"));
+
+        let info = extract_metadata(&input);
+
+        assert_eq!(info.metadata_found.len(), 1);
+        assert_eq!(info.metadata_found[0].category, "Trailing");
+        assert_eq!(info.metadata_found[0].name, "Trailing Data");
     }
 }

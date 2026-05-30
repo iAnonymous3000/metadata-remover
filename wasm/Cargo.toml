@@ -7,7 +7,7 @@ license = "MIT"
 repository = "https://github.com/iAnonymous3000/metadata-remover"
 
 [package.metadata.wasm-pack.profile.release]
-wasm-opt = false
+wasm-opt = ["-Oz", "--enable-bulk-memory"]
 
 [lib]
 crate-type = ["cdylib", "rlib"]

@@ -3,6 +3,8 @@ const scriptUrl = import.meta.url;
 const basePath = scriptUrl.substring(0, scriptUrl.lastIndexOf('/js/'));
 const isFramed = window.self !== window.top;
 const MAX_FILE_BYTES = 100 * 1024 * 1024;
+const BASE_MEMORY_BUDGET_BYTES = 512 * 1024 * 1024;
+const MIN_MEMORY_BUDGET_BYTES = 128 * 1024 * 1024;
 const ZIP32_MAX = 0xffffffff;
 const ZIP16_MAX = 0xffff;
 const SUPPORTED_EXTENSIONS = new Set(['jpg', 'jpeg', 'png', 'webp', 'gif', 'pdf', 'docx', 'xlsx', 'pptx']);
@@ -263,12 +265,18 @@ async function addFiles(newFiles) {
         }
     }
 
+    const memoryFiltered = filterByMemoryBudget(supportedFiles, candidateSourceFileBytes);
+    const filesToAnalyze = memoryFiltered.accepted;
+
     const feedbackMessages = [];
     if (legacyOfficeFiles.length > 0) {
         feedbackMessages.push(legacyOfficeMessage(legacyOfficeFiles));
     }
     if (unsupportedFiles.length > 0) {
         feedbackMessages.push(unsupportedFilesMessage(unsupportedFiles));
+    }
+    if (memoryFiltered.rejected.length > 0) {
+        feedbackMessages.push(memoryLimitMessage(memoryFiltered.rejected, memoryFiltered.budget));
     }
 
     if (feedbackMessages.length > 0) {
@@ -277,7 +285,7 @@ async function addFiles(newFiles) {
         clearDropFeedback();
     }
 
-    for (const file of supportedFiles) {
+    for (const file of filesToAnalyze) {
         const id = crypto.randomUUID();
         const record = {
             id,
@@ -299,6 +307,7 @@ async function addFiles(newFiles) {
 
         if (file.size > MAX_FILE_BYTES) {
             record.status = 'error';
+            record.sourceFile = null;
             record.errorMessage = `File exceeds the ${formatSize(MAX_FILE_BYTES)} limit.`;
             upsertFileRow(id);
             updateActions();
@@ -327,15 +336,26 @@ async function addFiles(newFiles) {
         updateActions();
     }
 
-    announce(addedSummary(supportedFiles.length));
+    announce(addedSummary(filesToAnalyze.length));
 }
 
 function queueFiles(newFiles) {
     if (newFiles.length === 0) return;
-    queuedFiles.push(...newFiles);
-    const fileText = queuedFiles.length === 1 ? 'file' : 'files';
-    dropFeedback.textContent = `Queued ${queuedFiles.length} ${fileText} until the local processor is ready.`;
-    dropFeedback.classList.add('visible');
+    const memoryFiltered = filterByMemoryBudget(newFiles, queuedSourceFileBytes);
+    queuedFiles.push(...memoryFiltered.accepted);
+
+    const messages = [];
+    if (queuedFiles.length > 0) {
+        const fileText = queuedFiles.length === 1 ? 'file' : 'files';
+        messages.push(`Queued ${queuedFiles.length} ${fileText} until the local processor is ready.`);
+    }
+    if (memoryFiltered.rejected.length > 0) {
+        messages.push(memoryLimitMessage(memoryFiltered.rejected, memoryFiltered.budget));
+    }
+
+    if (messages.length > 0) {
+        showDropFeedback(messages.join(' '));
+    }
 }
 
 function flushQueuedFiles() {
@@ -363,6 +383,70 @@ function legacyOfficeMessage(legacyOfficeFiles) {
     const extraText = extraCount > 0 ? ` and ${extraCount} more` : '';
     const fileText = legacyOfficeFiles.length === 1 ? 'file' : 'files';
     return `Skipped ${legacyOfficeFiles.length} legacy Office ${fileText}: ${shownNames.join(', ')}${extraText}. Save .doc, .xls, or .ppt files as .docx, .xlsx, or .pptx first.`;
+}
+
+function filterByMemoryBudget(candidateFiles, byteCounter = sourceFileBytesForBudget) {
+    const budget = memoryBudgetBytes();
+    let projectedBytes = currentMemoryBytes();
+    const accepted = [];
+    const rejected = [];
+
+    for (const file of candidateFiles) {
+        const sourceBytes = byteCounter(file);
+        if (sourceBytes === 0 || projectedBytes + sourceBytes <= budget) {
+            accepted.push(file);
+            projectedBytes += sourceBytes;
+        } else {
+            rejected.push(file);
+        }
+    }
+
+    return { accepted, rejected, budget };
+}
+
+function memoryBudgetBytes() {
+    const deviceMemory = Number(navigator.deviceMemory);
+    if (!Number.isFinite(deviceMemory) || deviceMemory <= 0) {
+        return BASE_MEMORY_BUDGET_BYTES;
+    }
+
+    const scaledBudget = Math.floor(deviceMemory * 1024 * 1024 * 1024 * 0.25);
+    return Math.min(BASE_MEMORY_BUDGET_BYTES, Math.max(MIN_MEMORY_BUDGET_BYTES, scaledBudget));
+}
+
+function currentMemoryBytes() {
+    let total = queuedFiles.reduce((sum, file) => sum + queuedSourceFileBytes(file), 0);
+    for (const file of files.values()) {
+        total += sourceFileBytesForBudget(file.sourceFile);
+        total += file.cleanedData?.byteLength ?? 0;
+    }
+    return total;
+}
+
+function queuedSourceFileBytes(file) {
+    const ext = extensionFor(file.name);
+    if (!SUPPORTED_EXTENSIONS.has(ext) || file.size > MAX_FILE_BYTES) {
+        return 0;
+    }
+    return file.size;
+}
+
+function candidateSourceFileBytes(file) {
+    return file.size > MAX_FILE_BYTES ? 0 : file.size;
+}
+
+function sourceFileBytesForBudget(file) {
+    return file?.size ?? 0;
+}
+
+function memoryLimitMessage(rejectedFiles, budget) {
+    const shownNames = rejectedFiles
+        .slice(0, 3)
+        .map((file) => file.name || 'unnamed file');
+    const extraCount = rejectedFiles.length - shownNames.length;
+    const extraText = extraCount > 0 ? ` and ${extraCount} more` : '';
+    const fileText = rejectedFiles.length === 1 ? 'file' : 'files';
+    return `Skipped ${rejectedFiles.length} ${fileText} because the local memory budget is ${formatSize(budget)}: ${shownNames.join(', ')}${extraText}. Download or clear finished files before adding more.`;
 }
 
 function showDropFeedback(message) {
@@ -578,6 +662,7 @@ async function processAllFiles() {
             current.cleanedSize = current.cleanedData.byteLength;
             current.verification = result.verification;
             current.metadata = result.verification;
+            current.sourceFile = null;
             current.status = result.verification.metadata_found.length === 0 ? 'done' : 'warning';
         } catch (e) {
             const current = files.get(id);
@@ -612,58 +697,112 @@ function showMetadata(id) {
     const file = files.get(id);
     if (!file) return;
 
-    const { metadata } = file;
-
     if (file.status === 'error') {
         modalBody.innerHTML = `<div class="no-metadata">${escapeHtml(file.errorMessage || 'Unable to process this file.')}</div>`;
-    } else if (metadata.metadata_found.length === 0) {
-        modalBody.innerHTML = `
-            <div class="no-metadata">No removable metadata found in this file.</div>
-            ${renderPreservedMetadataNote(file.type || metadata.file_type)}
-        `;
+    } else if (file.cleanedData) {
+        modalBody.innerHTML = renderCleanedMetadataDetails(file);
+    } else if (file.metadata.metadata_found.length === 0) {
+        modalBody.innerHTML = renderNoMetadata(file, 'No removable metadata found in this file.');
     } else {
-        const grouped = metadata.metadata_found.reduce((acc, entry) => {
-            (acc[entry.category] ??= []).push(entry);
-            return acc;
-        }, {});
-
-        let html = '';
-        for (const [category, entries] of Object.entries(grouped)) {
-            html += `
-                <div class="metadata-section">
-                    <h3>${escapeHtml(category)}</h3>
-                    <table class="metadata-table">
-                        ${entries.map((entry) => `
-                            <tr>
-                                <td>${escapeHtml(entry.name)}</td>
-                                <td>${escapeHtml(entry.value)}</td>
-                            </tr>
-                        `).join('')}
-                    </table>
-                </div>
-            `;
-        }
-
-        html += renderPreservedMetadataNote(file.type || metadata.file_type);
-
-        html += `
-            <div class="metadata-section">
-                <h3>Summary</h3>
-                <table class="metadata-table">
-                    <tr>
-                        <td>Total metadata bytes</td>
-                        <td>${formatSize(metadata.total_metadata_bytes)}</td>
-                    </tr>
-                </table>
-            </div>
-        `;
-
-        modalBody.innerHTML = html;
+        modalBody.innerHTML = renderMetadataDetails(
+            file,
+            file.metadata,
+            'Detected metadata',
+            'Total metadata bytes'
+        );
     }
 
     modal.classList.remove('hidden');
     lastFocusedElement = document.activeElement;
     modalClose.focus();
+}
+
+function renderCleanedMetadataDetails(file) {
+    const originalEntries = file.originalMetadata?.metadata_found ?? [];
+    const remainingEntries = file.verification?.metadata_found ?? [];
+    const remainingKeys = new Set(remainingEntries.map(metadataEntryKey));
+    const removedEntries = originalEntries.filter((entry) => !remainingKeys.has(metadataEntryKey(entry)));
+    const fileType = file.type || file.metadata.file_type || file.originalMetadata?.file_type;
+
+    if (originalEntries.length === 0 && remainingEntries.length === 0) {
+        return renderNoMetadata(file, 'No removable metadata was found before or after cleaning.');
+    }
+
+    return `
+        ${renderPreservedMetadataNote(fileType)}
+        ${renderEntrySection('Removed', removedEntries, 'No metadata entries were removed.')}
+        ${renderEntrySection('Still present after cleaning', remainingEntries, 'No removable metadata remains after cleaning.')}
+        <div class="metadata-section">
+            <h3>Summary</h3>
+            <table class="metadata-table">
+                <tr>
+                    <td>Original metadata bytes</td>
+                    <td>${formatSize(file.originalMetadata?.total_metadata_bytes ?? 0)}</td>
+                </tr>
+                <tr>
+                    <td>Remaining metadata bytes</td>
+                    <td>${formatSize(file.verification?.total_metadata_bytes ?? 0)}</td>
+                </tr>
+            </table>
+        </div>
+    `;
+}
+
+function renderMetadataDetails(file, metadata, title, totalLabel) {
+    return `
+        ${renderEntrySection(title, metadata.metadata_found, 'No removable metadata found in this file.')}
+        ${renderPreservedMetadataNote(file.type || metadata.file_type)}
+        <div class="metadata-section">
+            <h3>Summary</h3>
+            <table class="metadata-table">
+                <tr>
+                    <td>${escapeHtml(totalLabel)}</td>
+                    <td>${formatSize(metadata.total_metadata_bytes)}</td>
+                </tr>
+            </table>
+        </div>
+    `;
+}
+
+function renderNoMetadata(file, message) {
+    return `
+        <div class="no-metadata">${escapeHtml(message)}</div>
+        ${renderPreservedMetadataNote(file.type || file.metadata.file_type)}
+    `;
+}
+
+function renderEntrySection(title, entries, emptyMessage) {
+    if (entries.length === 0) {
+        return `
+            <div class="metadata-section">
+                <h3>${escapeHtml(title)}</h3>
+                <div class="metadata-empty">${escapeHtml(emptyMessage)}</div>
+            </div>
+        `;
+    }
+
+    const grouped = entries.reduce((acc, entry) => {
+        (acc[entry.category] ??= []).push(entry);
+        return acc;
+    }, {});
+
+    return Object.entries(grouped).map(([category, categoryEntries]) => `
+        <div class="metadata-section">
+            <h3>${escapeHtml(title)}: ${escapeHtml(category)}</h3>
+            <table class="metadata-table">
+                ${categoryEntries.map((entry) => `
+                    <tr>
+                        <td>${escapeHtml(entry.name)}</td>
+                        <td>${escapeHtml(entry.value)}</td>
+                    </tr>
+                `).join('')}
+            </table>
+        </div>
+    `).join('');
+}
+
+function metadataEntryKey(entry) {
+    return `${entry.category}\u0000${entry.name}\u0000${entry.value}`;
 }
 
 function renderPreservedMetadataNote(fileType) {
@@ -725,12 +864,7 @@ function downloadFile(id) {
     const blob = new Blob([file.cleanedData], { type: getMimeType(file.type) });
     const url = URL.createObjectURL(blob);
 
-    const a = document.createElement('a');
-    a.href = url;
-    a.download = cleanedFilename(file.name);
-    a.click();
-
-    setTimeout(() => URL.revokeObjectURL(url), 0);
+    triggerDownload(url, cleanedFilename(file.name));
 }
 
 function downloadAllFiles() {
@@ -751,11 +885,17 @@ function downloadAllFiles() {
     }
 
     const url = URL.createObjectURL(zip);
+    triggerDownload(url, 'metadata-cleaned.zip');
+}
+
+function triggerDownload(url, filename) {
     const a = document.createElement('a');
     a.href = url;
-    a.download = 'metadata-cleaned.zip';
+    a.download = filename;
+    document.body.appendChild(a);
     a.click();
-    setTimeout(() => URL.revokeObjectURL(url), 0);
+    a.remove();
+    setTimeout(() => URL.revokeObjectURL(url), 60_000);
 }
 
 function createZip(entries) {
@@ -769,6 +909,9 @@ function createZip(entries) {
 
     for (const entry of entries) {
         const nameBytes = new TextEncoder().encode(entry.name);
+        if (nameBytes.byteLength > ZIP16_MAX) {
+            throw new Error('A cleaned filename is too long for ZIP download.');
+        }
         const data = entry.data instanceof Uint8Array ? entry.data : new Uint8Array(entry.data);
         if (data.byteLength > ZIP32_MAX || offset > ZIP32_MAX) {
             throw new Error('Batch is too large for ZIP download.');
@@ -870,8 +1013,11 @@ function uniqueFilename(name, usedNames) {
 }
 
 function extensionFor(name) {
-    const ext = name.split('.').pop();
-    return ext ? ext.toLowerCase() : '';
+    const index = name.lastIndexOf('.');
+    if (index <= 0 || index === name.length - 1) {
+        return '';
+    }
+    return name.slice(index + 1).toLowerCase();
 }
 
 function emptyMetadata(fileType) {
