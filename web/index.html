@@ -5,15 +5,15 @@
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self' 'wasm-unsafe-eval'; worker-src 'self'; connect-src 'self'; style-src 'self'; img-src 'self'; manifest-src 'self'; object-src 'none'; frame-src 'none'; base-uri 'none'; form-action 'none'">
     <meta name="referrer" content="no-referrer">
-    <meta name="description" content="Remove metadata from JPEG, PNG, WebP, GIF, PDF, DOCX, XLSX, and PPTX files locally in your browser. No uploads, no accounts, and no file data leaves your device.">
+    <meta name="description" content="Find, remove, and verify file metadata from JPEG, PNG, WebP, GIF, PDF, DOCX, XLSX, and PPTX files locally in your browser.">
     <meta property="og:title" content="Metadata Remover">
-    <meta property="og:description" content="Privacy-first file cleaning that runs locally in your browser with Rust and WebAssembly.">
+    <meta property="og:description" content="Privacy-first file cleaning with local metadata detection, removal, and verification.">
     <meta property="og:type" content="website">
     <meta property="og:url" content="https://ianonymous3000.github.io/metadata-remover/">
     <meta property="og:image" content="https://ianonymous3000.github.io/metadata-remover/icon-512.png">
     <meta name="twitter:card" content="summary">
     <meta name="twitter:title" content="Metadata Remover">
-    <meta name="twitter:description" content="Remove file metadata locally in your browser. No uploads and no file data leaves your device.">
+    <meta name="twitter:description" content="Find, remove, and verify file metadata locally in your browser.">
     <meta name="theme-color" content="#0d1117">
     <title>Metadata Remover - Privacy-First File Cleaning</title>
     <link rel="canonical" href="https://ianonymous3000.github.io/metadata-remover/">
@@ -28,7 +28,7 @@
     <div class="container">
         <header>
             <h1>Metadata Remover</h1>
-            <p class="tagline">Remove metadata from files entirely in your browser. No uploads, no servers, and no file data leaves your device.</p>
+            <p class="tagline">Find hidden file metadata, clean it locally, and see the re-scan before you download.</p>
         </header>
 
         <main>
@@ -45,6 +45,17 @@
                 </div>
             </div>
             <div id="drop-feedback" class="drop-feedback" role="status" aria-live="polite"></div>
+            <div class="demo-actions">
+                <button id="sample-btn" class="btn btn-secondary btn-with-icon" type="button">
+                    <svg class="button-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true">
+                        <path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/>
+                        <polyline points="14 2 14 8 20 8"/>
+                        <circle cx="11" cy="14" r="2"/>
+                        <path d="M11 16v3"/>
+                    </svg>
+                    <span>Try sample JPEG</span>
+                </button>
+            </div>
 
             <section class="trust-points" aria-label="Privacy and processing details">
                 <div class="trust-point">
@@ -54,7 +65,7 @@
                     </svg>
                     <div>
                         <h2>Files stay on your device</h2>
-                        <p>No uploads, accounts, analytics, or server-side processing.</p>
+                        <p>The cleaning engine runs in this browser. No uploads, accounts, analytics, or server processing.</p>
                     </div>
                 </div>
                 <div class="trust-point">
@@ -62,8 +73,8 @@
                         <path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z"/>
                     </svg>
                     <div>
-                        <h2>Built with Rust</h2>
-                        <p>Rust keeps the cleaning engine fast and memory safe while it handles untrusted files.</p>
+                        <h2>Re-scans after cleaning</h2>
+                        <p>Before download, the app checks the cleaned file and shows anything that survived.</p>
                     </div>
                 </div>
                 <div class="trust-point">
@@ -72,8 +83,8 @@
                         <polyline points="8 6 2 12 8 18"/>
                     </svg>
                     <div>
-                        <h2>Powered by WebAssembly</h2>
-                        <p>WebAssembly lets the Rust engine run inside your browser, so parsing stays fast without uploads.</p>
+                        <h2>Code you can inspect</h2>
+                        <p>Rust compiled to WebAssembly keeps the parser local, fast, and open to review.</p>
                     </div>
                 </div>
             </section>
@@ -95,8 +106,14 @@
                     <rect x="3" y="11" width="18" height="11" rx="2" ry="2"/>
                     <path d="M7 11V7a5 5 0 0 1 10 0v4"/>
                 </svg>
-                <span>Built with Rust and WebAssembly; your files are cleaned on this device, inside your browser.</span>
+                <span>Cleaning and verification run locally in this tab.</span>
             </div>
+            <a class="source-link" href="https://github.com/iAnonymous3000/metadata-remover" target="_blank" rel="noopener noreferrer">
+                <svg class="github-icon" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true">
+                    <path d="M12 0.3C5.4 0.3 0 5.7 0 12.3c0 5.3 3.4 9.8 8.2 11.4 0.6 0.1 0.8-0.3 0.8-0.6v-2.1c-3.3 0.7-4-1.4-4-1.4-0.5-1.4-1.3-1.8-1.3-1.8-1.1-0.7 0.1-0.7 0.1-0.7 1.2 0.1 1.8 1.2 1.8 1.2 1.1 1.8 2.8 1.3 3.5 1 0.1-0.8 0.4-1.3 0.8-1.6-2.7-0.3-5.5-1.3-5.5-5.9 0-1.3 0.5-2.4 1.2-3.2-0.1-0.3-0.5-1.6 0.1-3.2 0 0 1-0.3 3.3 1.2 1-0.3 2-0.4 3-0.4s2 0.1 3 0.4c2.3-1.5 3.3-1.2 3.3-1.2 0.6 1.6 0.2 2.9 0.1 3.2 0.7 0.8 1.2 1.9 1.2 3.2 0 4.6-2.8 5.6-5.5 5.9 0.4 0.4 0.8 1.1 0.8 2.2v3.3c0 0.3 0.2 0.7 0.8 0.6 4.8-1.6 8.2-6.1 8.2-11.4C24 5.7 18.6 0.3 12 0.3z"/>
+                </svg>
+                <span>Open source on GitHub</span>
+            </a>
         </footer>
     </div>
 

@@ -1,4 +1,4 @@
-const CACHE_NAME = 'metadata-remover-v9';
+const CACHE_NAME = 'metadata-remover-v12';
 const ASSETS = [
     '.',
     'index.html',
@@ -8,6 +8,8 @@ const ASSETS = [
     'icon-512.png',
     'css/style.css',
     'js/app.js',
+    'js/metadata-summary.js',
+    'js/sample-jpeg.js',
     'js/worker.js',
     'wasm/metadata_remover.js',
     'wasm/metadata_remover_bg.wasm'

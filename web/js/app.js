@@ -1,3 +1,6 @@
+import { metadataSummary } from './metadata-summary.js';
+import { createSampleJpegFile } from './sample-jpeg.js';
+
 // Detect base path for GitHub Pages (handles /repo-name/ subpath).
 const scriptUrl = import.meta.url;
 const basePath = scriptUrl.substring(0, scriptUrl.lastIndexOf('/js/'));
@@ -32,6 +35,7 @@ const actions = document.getElementById('actions');
 const processBtn = document.getElementById('process-btn');
 const downloadAllBtn = document.getElementById('download-all-btn');
 const clearBtn = document.getElementById('clear-btn');
+const sampleBtn = document.getElementById('sample-btn');
 const modal = document.getElementById('modal');
 const modalBody = document.getElementById('modal-body');
 const modalClose = document.querySelector('.modal-close');
@@ -129,6 +133,7 @@ fileInput.addEventListener('change', handleFileSelect);
 processBtn.addEventListener('click', processAllFiles);
 downloadAllBtn.addEventListener('click', downloadAllFiles);
 clearBtn.addEventListener('click', clearAllFiles);
+sampleBtn?.addEventListener('click', loadSampleFile);
 modalClose.addEventListener('click', closeModal);
 modal.addEventListener('click', (e) => {
     if (e.target === modal) closeModal();
@@ -204,6 +209,7 @@ async function sendWorkerMessage(type, payload = {}) {
 
 function showLoadError(message) {
     wasmReady = false;
+    if (sampleBtn) sampleBtn.disabled = true;
     dropZone.innerHTML = `
         <div class="drop-zone-content error">
             <p>${escapeHtml(message)}</p>
@@ -242,6 +248,21 @@ function handleDrop(e) {
 function handleFileSelect(e) {
     addFiles(Array.from(e.target.files));
     fileInput.value = '';
+}
+
+async function loadSampleFile() {
+    if (!sampleBtn) return;
+
+    sampleBtn.disabled = true;
+    try {
+        clearDropFeedback();
+        const sampleFile = await createSampleJpegFile();
+        await addFiles([sampleFile]);
+    } catch (e) {
+        showDropFeedback(e.message || 'Unable to create the sample JPEG.');
+    } finally {
+        sampleBtn.disabled = false;
+    }
 }
 
 async function addFiles(newFiles) {
@@ -580,6 +601,13 @@ function renderMetaText(file) {
         return escapeHtml(file.errorMessage || 'Unable to process this file.');
     }
 
+    if (file.status === 'loading') {
+        return `
+            <span>${formatSize(file.size)}</span>
+            <span>Reading metadata</span>
+        `;
+    }
+
     if (file.status === 'done') {
         return `
             <span>${formatSize(file.size)} -> ${formatSize(file.cleanedSize)}</span>
@@ -588,10 +616,11 @@ function renderMetaText(file) {
     }
 
     if (file.status === 'warning') {
-        const remaining = file.verification?.metadata_found.length ?? 0;
+        const remainingEntries = file.verification?.metadata_found ?? [];
+        const summary = metadataSummary(remainingEntries);
         return `
             <span>${formatSize(file.size)} -> ${formatSize(file.cleanedSize)}</span>
-            <span class="metadata-count">${remaining} metadata ${remaining === 1 ? 'entry' : 'entries'} remain</span>
+            <span class="metadata-count">${escapeHtml(summary)} still present</span>
         `;
     }
 
@@ -600,7 +629,7 @@ function renderMetaText(file) {
     return `
         <span>${formatSize(file.size)}</span>
         <span class="metadata-count ${isClean ? 'clean' : ''}">
-            ${metaCount} metadata ${metaCount === 1 ? 'entry' : 'entries'}
+            ${escapeHtml(isClean ? 'No removable metadata found' : metadataSummary(file.metadata.metadata_found))}
         </span>
     `;
 }
