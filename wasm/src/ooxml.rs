@@ -185,7 +185,7 @@ pub fn remove_metadata(data: &[u8]) -> Result<Vec<u8>, String> {
         let Some(xml) = archive.read_xml(&name)? else {
             continue;
         };
-        let cleaned = clean_relationships(&xml, kind);
+        let cleaned = clean_relationships(&xml, kind, &name);
         if cleaned != xml {
             changed.insert(name, cleaned.into_bytes());
         }
@@ -614,7 +614,7 @@ fn docx_comment_part_names(archive: &ZipArchive<'_>) -> Vec<String> {
 }
 
 fn is_document_property_part(name: &str) -> bool {
-    name.starts_with("docProps/")
+    name.to_ascii_lowercase().starts_with("docprops/")
 }
 
 fn is_removed_part_for_kind(name: &str, kind: OoxmlKind) -> bool {
@@ -672,46 +672,67 @@ fn clean_content_types(xml: &str, kind: OoxmlKind) -> String {
     })
 }
 
-fn clean_relationships(xml: &str, kind: OoxmlKind) -> String {
+fn clean_relationships(xml: &str, kind: OoxmlKind, relationship_part_name: &str) -> String {
     remove_xml_elements_where(xml, &["Relationship"], |attrs| {
+        if attr_value(attrs, "TargetMode")
+            .map(|value| value.eq_ignore_ascii_case("External"))
+            .unwrap_or(false)
+        {
+            return false;
+        }
+
         let target = attr_value(attrs, "Target")
             .unwrap_or_default()
-            .replace('\\', "/")
-            .to_ascii_lowercase();
-        let rel_type = attr_value(attrs, "Type")
+            .split('#')
+            .next()
             .unwrap_or_default()
-            .to_ascii_lowercase();
+            .replace('\\', "/");
+        let Some(target_part) = relationship_target_part_name(relationship_part_name, &target)
+        else {
+            return false;
+        };
 
-        target.starts_with("docprops/")
-            || target.contains("/docprops/")
-            || rel_type.contains("metadata/core-properties")
-            || rel_type.contains("extended-properties")
-            || rel_type.contains("custom-properties")
-            || relationship_targets_removed_part(&target, &rel_type, kind)
+        is_document_property_part(&target_part) || is_removed_part_for_kind(&target_part, kind)
     })
 }
 
-fn relationship_targets_removed_part(target: &str, rel_type: &str, kind: OoxmlKind) -> bool {
-    match kind {
-        OoxmlKind::Docx => {
-            target.contains("comments")
-                || target.ends_with("people.xml")
-                || target.ends_with("commentauthors.xml")
-                || rel_type.contains("/comments")
-                || rel_type.contains("/people")
-        }
-        OoxmlKind::Xlsx => false,
-        OoxmlKind::Pptx => {
-            target.contains("comments/")
-                || target.contains("threadedcomments/")
-                || target.ends_with("commentauthors.xml")
-                || target.ends_with("authors.xml")
-                || rel_type.contains("/comments")
-                || rel_type.contains("/threadedcomments")
-                || rel_type.contains("/commentauthors")
-                || rel_type.ends_with("/authors")
+fn relationship_target_part_name(relationship_part_name: &str, target: &str) -> Option<String> {
+    let target = target.trim();
+    if target.is_empty() {
+        return None;
+    }
+
+    let mut parts = Vec::new();
+    if !target.starts_with('/') {
+        let base = relationship_source_base(relationship_part_name)?;
+        parts.extend(
+            base.split('/')
+                .filter(|part| !part.is_empty())
+                .map(str::to_string),
+        );
+    }
+
+    for part in target.trim_start_matches('/').split('/') {
+        match part {
+            "" | "." => {}
+            ".." => {
+                parts.pop()?;
+            }
+            _ => parts.push(part.to_string()),
         }
     }
+
+    Some(parts.join("/").to_ascii_lowercase())
+}
+
+fn relationship_source_base(relationship_part_name: &str) -> Option<&str> {
+    if relationship_part_name == "_rels/.rels" {
+        return Some("");
+    }
+
+    relationship_part_name
+        .rfind("/_rels/")
+        .map(|rels_offset| &relationship_part_name[..rels_offset])
 }
 
 fn clean_word_content(xml: &str) -> String {
@@ -1507,6 +1528,7 @@ mod tests {
 <Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships">
   <Relationship Id="rId4" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/comments" Target="../comments/comment1.xml"/>
   <Relationship Id="rId5" Type="http://schemas.microsoft.com/office/2017/10/relationships/threadedComments" Target="../threadedComments/threadedComment1.xml"/>
+  <Relationship Id="rId6" Type="http://schemas.example.test/relationships/commentsExtended" Target="../notes/commentary.xml"/>
 </Relationships>"#;
         let core = br#"<?xml version="1.0" encoding="UTF-8"?>
 <cp:coreProperties xmlns:cp="http://schemas.openxmlformats.org/package/2006/metadata/core-properties" xmlns:dc="http://purl.org/dc/elements/1.1/">
@@ -1524,6 +1546,8 @@ mod tests {
 <p:cmAuthorLst xmlns:p="http://schemas.openxmlformats.org/presentationml/2006/main"><p:cmAuthor name="Bob Reviewer"/></p:cmAuthorLst>"#;
         let authors = br#"<?xml version="1.0" encoding="UTF-8"?>
 <p188:authorLst xmlns:p188="http://schemas.microsoft.com/office/powerpoint/2018/8/main"><p188:author name="Modern Author"/></p188:authorLst>"#;
+        let retained_comment_adjacent_part = br#"<?xml version="1.0" encoding="UTF-8"?>
+<note>Comment-adjacent content should stay</note>"#;
 
         stored_zip(&[
             ("[Content_Types].xml", content_types),
@@ -1540,6 +1564,7 @@ mod tests {
             ),
             ("ppt/commentAuthors.xml", comment_authors),
             ("ppt/authors.xml", authors),
+            ("ppt/notes/commentary.xml", retained_comment_adjacent_part),
         ])
     }
 
@@ -1674,9 +1699,9 @@ mod tests {
 
         for xml in [&content_types, &presentation_rels, &slide_rels] {
             for removed_reference in [
-                "comment",
-                "threadedComment",
-                "commentAuthors",
+                "comments/comment1.xml",
+                "threadedComments/threadedComment1.xml",
+                "commentAuthors.xml",
                 "authors.xml",
                 "docProps",
             ] {
@@ -1687,7 +1712,11 @@ mod tests {
             }
         }
 
+        assert!(archive.entry("ppt/notes/commentary.xml").is_some());
+        assert!(slide_rels.contains("commentsExtended"));
+        assert!(slide_rels.contains("../notes/commentary.xml"));
         assert!(cleaned_text.contains("Slide text"));
+        assert!(cleaned_text.contains("Comment-adjacent content should stay"));
         validate(&cleaned).unwrap();
 
         let cleaned_info = extract_metadata(&cleaned);
@@ -1700,25 +1729,43 @@ mod tests {
 
     #[test]
     fn test_xlsx_comments_are_reported_as_not_removed() {
-        let content_types = br#"<Types xmlns="http://schemas.openxmlformats.org/package/2006/content-types"><Override PartName="/xl/workbook.xml" ContentType="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet.main+xml"/><Override PartName="/docProps/core.xml" ContentType="application/vnd.openxmlformats-package.core-properties+xml"/></Types>"#;
+        let content_types = br#"<Types xmlns="http://schemas.openxmlformats.org/package/2006/content-types"><Override PartName="/xl/workbook.xml" ContentType="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet.main+xml"/><Override PartName="/xl/worksheets/sheet1.xml" ContentType="application/vnd.openxmlformats-officedocument.spreadsheetml.worksheet+xml"/><Override PartName="/xl/comments1.xml" ContentType="application/vnd.openxmlformats-officedocument.spreadsheetml.comments+xml"/><Override PartName="/docProps/core.xml" ContentType="application/vnd.openxmlformats-package.core-properties+xml"/></Types>"#;
         let rels = br#"<Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships"><Relationship Id="rId1" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/officeDocument" Target="xl/workbook.xml"/><Relationship Id="rId2" Type="http://schemas.openxmlformats.org/package/2006/relationships/metadata/core-properties" Target="docProps/core.xml"/></Relationships>"#;
+        let sheet_rels = br#"<Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships"><Relationship Id="rId3" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/comments" Target="../comments1.xml"/></Relationships>"#;
         let core = br#"<cp:coreProperties xmlns:cp="x" xmlns:dc="y"><dc:creator>Alice</dc:creator></cp:coreProperties>"#;
         let workbook =
             br#"<workbook xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main"/>"#;
+        let sheet =
+            br#"<worksheet xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main"/>"#;
         let comments = br#"<comments xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main"><authors><author>Alice</author></authors></comments>"#;
         let input = stored_zip(&[
             ("[Content_Types].xml", content_types),
             ("_rels/.rels", rels),
             ("docProps/core.xml", core),
             ("xl/workbook.xml", workbook),
+            ("xl/worksheets/sheet1.xml", sheet),
+            ("xl/worksheets/_rels/sheet1.xml.rels", sheet_rels),
             ("xl/comments1.xml", comments),
         ]);
 
         assert_eq!(detect_file_type(&input), Some("xlsx"));
         let cleaned = remove_metadata(&input).unwrap();
+        let archive = parse_archive(&cleaned).unwrap();
         let cleaned_text = String::from_utf8_lossy(&cleaned);
         assert!(!cleaned_text.contains("docProps/core.xml"));
         assert!(cleaned_text.contains("xl/comments1.xml"));
+        assert!(archive.entry("xl/comments1.xml").is_some());
+
+        let cleaned_content_types = archive
+            .read_xml("[Content_Types].xml")
+            .unwrap()
+            .expect("content types");
+        let cleaned_sheet_rels = archive
+            .read_xml("xl/worksheets/_rels/sheet1.xml.rels")
+            .unwrap()
+            .expect("sheet rels");
+        assert!(cleaned_content_types.contains("xl/comments1.xml"));
+        assert!(cleaned_sheet_rels.contains("../comments1.xml"));
 
         let cleaned_info = extract_metadata(&cleaned);
         assert!(cleaned_info
