@@ -31,7 +31,7 @@ jobs:
 
       - name: Setup Rust
         id: toolchain
-        uses: dtolnay/rust-toolchain@1.94.1
+        uses: dtolnay/rust-toolchain@1.100.0
         with:
           targets: wasm32-unknown-unknown
           components: clippy,rustfmt
