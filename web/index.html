@@ -1,0 +1,280 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <!-- GitHub Pages cannot serve custom security headers from _headers.
+         This meta policy is the production CSP for Pages; header-only
+         directives such as frame-ancestors and HSTS require another host. -->
+    <meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self' 'wasm-unsafe-eval' 'sha256-WQ/924/BeVrt6v5h7ZDJxV2CJljfKUYSpbyPyJ0w1Ic='; worker-src 'self'; connect-src 'self'; style-src 'self'; img-src 'self' blob:; manifest-src 'self'; object-src 'none'; frame-src 'none'; base-uri 'none'; form-action 'none'">
+    <meta name="referrer" content="no-referrer">
+    <meta name="description" content="Remove EXIF data, GPS location, PDF metadata, Office author names, EPUB metadata, and MP3 ID3 tags locally in your browser. No uploads; cleaned files are re-scanned before download.">
+    <meta name="keywords" content="remove EXIF data, remove GPS location from photo, strip PDF metadata, remove Word author name, remove EPUB metadata, remove MP3 ID3 tags, remove metadata without uploading">
+    <meta name="application-name" content="Metadata Remover">
+    <meta property="og:title" content="Metadata Remover - Remove EXIF, GPS &amp; Document Metadata">
+    <meta property="og:description" content="Remove hidden photo, PDF, Office, EPUB, and MP3 metadata locally in your browser. No uploads, no accounts, and a re-scan before download.">
+    <meta property="og:type" content="website">
+    <meta property="og:url" content="https://ianonymous3000.github.io/metadata-remover/">
+    <meta property="og:image" content="https://ianonymous3000.github.io/metadata-remover/icon-512.png">
+    <meta name="twitter:card" content="summary">
+    <meta name="twitter:title" content="Metadata Remover - Remove EXIF, GPS &amp; Document Metadata">
+    <meta name="twitter:description" content="Remove hidden photo, PDF, Office, EPUB, and MP3 metadata locally in your browser, without uploading files.">
+    <meta name="theme-color" content="#0d1117">
+    <title>Metadata Remover - Remove EXIF, GPS &amp; Document Metadata in Your Browser</title>
+    <link rel="canonical" href="https://ianonymous3000.github.io/metadata-remover/">
+    <link rel="manifest" href="manifest.webmanifest">
+    <link rel="icon" href="icon.svg" type="image/svg+xml">
+    <link rel="stylesheet" href="css/style.css">
+</head>
+<body>
+    <noscript>
+        <div class="noscript-warning">Metadata Remover needs JavaScript and WebAssembly to clean files locally in your browser.</div>
+    </noscript>
+    <div class="container">
+        <header>
+            <h1>Metadata Remover</h1>
+            <p class="tagline">Find hidden file metadata, clean it locally, and see the re-scan before you download.</p>
+        </header>
+
+        <main>
+            <div id="drop-zone" class="drop-zone" role="button" tabindex="0" aria-label="Drop files here or browse" aria-describedby="supported-formats">
+                <div class="drop-zone-content">
+                    <svg class="icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true">
+                        <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/>
+                        <polyline points="17 8 12 3 7 8"/>
+                        <line x1="12" y1="3" x2="12" y2="15"/>
+                    </svg>
+                    <p>Drop files here or <label for="file-input" class="file-label">browse</label></p>
+                    <p id="supported-formats" class="supported">Supports: JPEG, PNG, WebP, AVIF, GIF, HEIC/HEIF, TIFF, SVG, MP4/MOV, MP3, PDF, DOCX, XLSX, PPTX, ODT, ODS, ODP, EPUB</p>
+                    <input type="file" id="file-input" multiple>
+                </div>
+            </div>
+            <div id="drop-feedback" class="drop-feedback" role="status" aria-live="polite"></div>
+            <div class="demo-actions">
+                <button id="sample-btn" class="btn btn-secondary btn-with-icon" type="button">
+                    <svg class="button-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true">
+                        <path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/>
+                        <polyline points="14 2 14 8 20 8"/>
+                        <circle cx="11" cy="14" r="2"/>
+                        <path d="M11 16v3"/>
+                    </svg>
+                    <span>Try sample JPEG</span>
+                </button>
+            </div>
+
+            <section class="trust-points" aria-label="Privacy and processing details">
+                <div class="trust-point">
+                    <svg class="icon-small" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true">
+                        <rect x="3" y="11" width="18" height="11" rx="2" ry="2"/>
+                        <path d="M7 11V7a5 5 0 0 1 10 0v4"/>
+                    </svg>
+                    <div>
+                        <h2>Files stay on your device</h2>
+                        <p>The cleaning engine runs in this browser. No uploads, accounts, analytics, or server processing.</p>
+                    </div>
+                </div>
+                <div class="trust-point">
+                    <svg class="icon-small" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true">
+                        <path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z"/>
+                    </svg>
+                    <div>
+                        <h2>Re-scans after cleaning</h2>
+                        <p>Before download, the app checks the cleaned file and shows anything that survived.</p>
+                    </div>
+                </div>
+                <div class="trust-point">
+                    <svg class="icon-small" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true">
+                        <polyline points="16 18 22 12 16 6"/>
+                        <polyline points="8 6 2 12 8 18"/>
+                    </svg>
+                    <div>
+                        <h2>Code you can inspect</h2>
+                        <p>Rust compiled to WebAssembly keeps the parser local, fast, and open to review.</p>
+                    </div>
+                </div>
+            </section>
+
+            <div id="file-list" class="file-list"></div>
+
+            <div id="actions" class="actions hidden">
+                <button id="process-btn" class="btn btn-primary">Remove All Metadata</button>
+                <button id="download-all-btn" class="btn btn-secondary" disabled>Download All</button>
+                <button id="clear-btn" class="btn btn-secondary">Clear All</button>
+            </div>
+
+            <section class="metadata-risks" aria-labelledby="metadata-risks-title">
+                <div class="section-heading">
+                    <h2 id="metadata-risks-title">What hidden metadata can reveal</h2>
+                    <p>Metadata is saved inside the file itself, so it can travel with every copy you send, post, or upload.</p>
+                </div>
+                <div class="risk-grid">
+                    <article class="risk-item">
+                        <svg class="icon-small" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true">
+                            <path d="M23 19a2 2 0 0 1-2 2H3a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h4l2-3h6l2 3h4a2 2 0 0 1 2 2z"/>
+                            <circle cx="12" cy="13" r="4"/>
+                        </svg>
+                        <div>
+                            <h3>Photos</h3>
+                            <p>A phone photo can include exact GPS coordinates, the device model, and the date and time it was taken.</p>
+                        </div>
+                    </article>
+                    <article class="risk-item">
+                        <svg class="icon-small" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true">
+                            <path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/>
+                            <polyline points="14 2 14 8 20 8"/>
+                            <line x1="16" y1="13" x2="8" y2="13"/>
+                            <line x1="16" y1="17" x2="8" y2="17"/>
+                        </svg>
+                        <div>
+                            <h3>Documents</h3>
+                            <p>PDF, ebook, Office, and audio files can store author names, company names, comments, edit history, titles, artist names, and embedded artwork.</p>
+                        </div>
+                    </article>
+                    <article class="risk-item">
+                        <svg class="icon-small" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true">
+                            <path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z"/>
+                            <circle cx="12" cy="12" r="3"/>
+                        </svg>
+                        <div>
+                            <h3>Invisible, but attached</h3>
+                            <p>This data usually does not appear when you open the file, but it can still be read by apps and websites.</p>
+                        </div>
+                    </article>
+                </div>
+            </section>
+
+            <section class="faq" aria-labelledby="faq-title">
+                <div class="section-heading">
+                    <h2 id="faq-title">Metadata removal questions</h2>
+                </div>
+                <div class="faq-list">
+                    <article class="faq-item">
+                        <h3>What is metadata and why is it a privacy risk?</h3>
+                        <p>Metadata is extra information stored inside a file. It can include GPS location, capture timestamps, camera details, author names, company names, comments, and edit history that are not obvious from the visible file content.</p>
+                    </article>
+                    <article class="faq-item">
+                        <h3>Does this remove EXIF GPS location from photos?</h3>
+                        <p>Yes. For supported image formats, Metadata Remover strips EXIF and location metadata such as GPS coordinates, camera model, software tags, and capture timestamps while preserving display-critical data like JPEG orientation and color information.</p>
+                    </article>
+                    <article class="faq-item">
+                        <h3>Can I strip metadata from PDF, Office, EPUB, and MP3 files?</h3>
+                        <p>Yes. The app removes PDF info dictionaries, XMP metadata, annotation author/comment fields, Office document properties and review data, EPUB package metadata, and MP3 ID3 tags for supported files.</p>
+                    </article>
+                    <article class="faq-item">
+                        <h3>Is my file uploaded anywhere?</h3>
+                        <p>No. Cleaning runs locally in this browser tab with WebAssembly. The app has no analytics, accounts, uploads, or server-side file processing.</p>
+                    </article>
+                    <article class="faq-item">
+                        <h3>Will cleaning change how my file looks?</h3>
+                        <p>Images keep display-critical data where needed so they do not rotate sideways or shift colors. Document review content, such as comments, deleted tracked text, and PDF annotation notes, may be removed because that content can reveal private review history.</p>
+                    </article>
+                </div>
+            </section>
+
+            <div id="sr-status" class="sr-only" role="status" aria-live="polite"></div>
+        </main>
+
+        <footer>
+            <div class="privacy-note">
+                <svg class="icon-small" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true">
+                    <rect x="3" y="11" width="18" height="11" rx="2" ry="2"/>
+                    <path d="M7 11V7a5 5 0 0 1 10 0v4"/>
+                </svg>
+                <span>Cleaning and verification run locally in this tab.</span>
+            </div>
+            <a class="source-link" href="https://github.com/iAnonymous3000/metadata-remover" target="_blank" rel="noopener noreferrer">
+                <svg class="github-icon" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true">
+                    <path d="M12 0.3C5.4 0.3 0 5.7 0 12.3c0 5.3 3.4 9.8 8.2 11.4 0.6 0.1 0.8-0.3 0.8-0.6v-2.1c-3.3 0.7-4-1.4-4-1.4-0.5-1.4-1.3-1.8-1.3-1.8-1.1-0.7 0.1-0.7 0.1-0.7 1.2 0.1 1.8 1.2 1.8 1.2 1.1 1.8 2.8 1.3 3.5 1 0.1-0.8 0.4-1.3 0.8-1.6-2.7-0.3-5.5-1.3-5.5-5.9 0-1.3 0.5-2.4 1.2-3.2-0.1-0.3-0.5-1.6 0.1-3.2 0 0 1-0.3 3.3 1.2 1-0.3 2-0.4 3-0.4s2 0.1 3 0.4c2.3-1.5 3.3-1.2 3.3-1.2 0.6 1.6 0.2 2.9 0.1 3.2 0.7 0.8 1.2 1.9 1.2 3.2 0 4.6-2.8 5.6-5.5 5.9 0.4 0.4 0.8 1.1 0.8 2.2v3.3c0 0.3 0.2 0.7 0.8 0.6 4.8-1.6 8.2-6.1 8.2-11.4C24 5.7 18.6 0.3 12 0.3z"/>
+                </svg>
+                <span>Open source on GitHub</span>
+            </a>
+        </footer>
+    </div>
+
+    <div id="modal" class="modal hidden" role="dialog" aria-modal="true" aria-labelledby="modal-title">
+        <div class="modal-content">
+            <div class="modal-header">
+                <h2 id="modal-title">Metadata Details</h2>
+                <button class="modal-close" aria-label="Close metadata details">&times;</button>
+            </div>
+            <div class="modal-body" id="modal-body"></div>
+        </div>
+    </div>
+
+    <script type="application/ld+json">
+{
+  "@context": "https://schema.org",
+  "@graph": [
+    {
+      "@type": "SoftwareApplication",
+      "name": "Metadata Remover",
+      "applicationCategory": "SecurityApplication",
+      "operatingSystem": "Any",
+      "url": "https://ianonymous3000.github.io/metadata-remover/",
+      "description": "Remove EXIF data, GPS location, PDF metadata, Office document author names, EPUB metadata, and MP3 ID3 tags locally in your browser without uploading files.",
+      "browserRequirements": "Requires JavaScript and WebAssembly.",
+      "featureList": [
+        "Remove EXIF and GPS metadata from supported photos",
+        "Strip PDF metadata and annotation review fields",
+        "Remove DOCX, XLSX, and PPTX document properties and review data",
+        "Remove EPUB package metadata and MP3 ID3 tags",
+        "Re-scan cleaned files before download",
+        "Process files locally without uploads"
+      ],
+      "offers": {
+        "@type": "Offer",
+        "price": "0",
+        "priceCurrency": "USD"
+      }
+    },
+    {
+      "@type": "FAQPage",
+      "mainEntity": [
+        {
+          "@type": "Question",
+          "name": "What is metadata and why is it a privacy risk?",
+          "acceptedAnswer": {
+            "@type": "Answer",
+            "text": "Metadata is extra information stored inside a file. It can include GPS location, capture timestamps, camera details, author names, company names, comments, and edit history that are not obvious from the visible file content."
+          }
+        },
+        {
+          "@type": "Question",
+          "name": "Does this remove EXIF GPS location from photos?",
+          "acceptedAnswer": {
+            "@type": "Answer",
+            "text": "Yes. For supported image formats, Metadata Remover strips EXIF and location metadata such as GPS coordinates, camera model, software tags, and capture timestamps while preserving display-critical data like JPEG orientation and color information."
+          }
+        },
+        {
+          "@type": "Question",
+          "name": "Can I strip metadata from PDF, Office, EPUB, and MP3 files?",
+          "acceptedAnswer": {
+            "@type": "Answer",
+            "text": "Yes. The app removes PDF info dictionaries, XMP metadata, annotation author and comment fields, Office document properties and review data, EPUB package metadata, and MP3 ID3 tags for supported files."
+          }
+        },
+        {
+          "@type": "Question",
+          "name": "Is my file uploaded anywhere?",
+          "acceptedAnswer": {
+            "@type": "Answer",
+            "text": "No. Cleaning runs locally in this browser tab with WebAssembly. The app has no analytics, accounts, uploads, or server-side file processing."
+          }
+        },
+        {
+          "@type": "Question",
+          "name": "Will cleaning change how my file looks?",
+          "acceptedAnswer": {
+            "@type": "Answer",
+            "text": "Images keep display-critical data where needed so they do not rotate sideways or shift colors. Document review content, such as comments, deleted tracked text, and PDF annotation notes, may be removed because that content can reveal private review history."
+          }
+        }
+      ]
+    }
+  ]
+}
+    </script>
+    <script type="module" src="js/app.js"></script>
+</body>
+</html>

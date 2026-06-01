@@ -1,0 +1,33 @@
+# Rust / Cargo
+/wasm/target/
+/wasm/fuzz/target/
+
+# WASM build output (rebuilt on deploy)
+/wasm/pkg/
+/web/wasm/
+/dist/
+
+# Node
+node_modules/
+package-lock.json
+
+# OS
+.DS_Store
+Thumbs.db
+
+# IDE
+.idea/
+.vscode/
+*.swp
+*.swo
+*~
+
+# Claude Code
+.claude/
+
+# Test files
+/test-files/
+
+# Environment
+.env
+.env.local

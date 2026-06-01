@@ -1,0 +1,24 @@
+{
+  "name": "metadata-remover",
+  "version": "1.0.0",
+  "description": "Privacy-focused metadata removal using WebAssembly",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "build": "npm run build:wasm && npm run copy:wasm",
+    "build:wasm": "cd wasm && wasm-pack build --target web --release",
+    "copy:wasm": "rm -rf web/wasm && mkdir -p web/wasm && cp wasm/pkg/metadata_remover.js wasm/pkg/metadata_remover_bg.wasm web/wasm/",
+    "check:rust": "cd wasm && cargo fmt -- --check && cargo test --locked && cargo clippy --locked --all-targets -- -D warnings && cargo audit --deny warnings",
+    "check:wasm-determinism": "tmp=\"${TMPDIR:-/tmp}/metadata-remover-wasm-determinism-$$\" && rm -rf \"$tmp\" web/wasm wasm/pkg && mkdir -p \"$tmp\" && npm run build && cp web/wasm/metadata_remover_bg.wasm \"$tmp/first.wasm\" && rm -rf web/wasm wasm/pkg && npm run build && cmp \"$tmp/first.wasm\" web/wasm/metadata_remover_bg.wasm && rm -rf \"$tmp\"",
+    "check:js": "node --check web/js/app.js && node --check web/js/download-names.js && node --check web/js/file-lifecycle.js && node --check web/js/memory-budget.js && node --check web/js/metadata-modal.js && node --check web/js/metadata-summary.js && node --check web/js/sample-jpeg.js && node --check web/js/visual-verification-queue.js && node --check web/js/worker-errors.js && node --check web/js/worker-state.js && node --check web/js/worker.js && node --check web/js/zip-download.js && node --check test/metadata-ui.test.js && node --check test/hosting.test.js && node --check test/docs.test.js",
+    "test:js": "node --test test/metadata-ui.test.js test/hosting.test.js test/docs.test.js",
+    "test": "npm run check:js && npm run build && npm run test:js",
+    "dist": "npm run build && rm -rf dist && mkdir -p dist && cp -R web/. dist/",
+    "release-check": "npm run check:rust && npm run check:wasm-determinism && npm test && npm run dist",
+    "serve": "npx --yes serve web -p 3000",
+    "serve:dist": "npx --yes serve dist -p 3000",
+    "dev": "npm run build && npm run serve"
+  },
+  "keywords": ["privacy", "metadata", "exif", "wasm"],
+  "license": "MIT"
+}

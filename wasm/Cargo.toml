@@ -1,0 +1,29 @@
+[package]
+name = "metadata-remover"
+version = "1.0.0"
+edition = "2021"
+description = "Privacy-focused metadata removal for files"
+license = "MIT"
+repository = "https://github.com/iAnonymous3000/metadata-remover"
+
+[package.metadata.wasm-pack.profile.release]
+wasm-opt = ["-Oz", "--enable-bulk-memory"]
+
+[lib]
+crate-type = ["cdylib", "rlib"]
+
+[dependencies]
+wasm-bindgen = "0.2"
+js-sys = "0.3"
+serde = { version = "1.0", features = ["derive"] }
+serde-wasm-bindgen = "0.6"
+lopdf = "0.34"
+flate2 = "1.1"
+crc32fast = "1.5"
+
+[profile.release]
+opt-level = "z"
+lto = true
+codegen-units = 1
+panic = "abort"
+strip = true
