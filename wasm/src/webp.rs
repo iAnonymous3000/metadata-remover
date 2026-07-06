@@ -1,3 +1,4 @@
+use crate::util::contains_ascii_ci;
 use crate::{MetadataEntry, MetadataInfo};
 
 const RIFF_MAGIC: &[u8; 4] = b"RIFF";
@@ -56,15 +57,6 @@ fn checked_chunk_bounds(offset: usize, data: &[u8], limit: usize) -> Option<(usi
 
 fn chunk_name(chunk_type: &[u8]) -> String {
     String::from_utf8_lossy(chunk_type).trim().to_string()
-}
-
-fn contains_ascii_ci(haystack: &[u8], needle: &[u8]) -> bool {
-    if needle.is_empty() {
-        return true;
-    }
-    haystack
-        .windows(needle.len())
-        .any(|window| window.eq_ignore_ascii_case(needle))
 }
 
 fn is_content_credentials_chunk(chunk_type: &[u8], chunk_data: &[u8]) -> bool {

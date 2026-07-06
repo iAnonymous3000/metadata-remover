@@ -1,3 +1,4 @@
+use crate::util::{decode_xml_entities, local_name};
 use crate::{MetadataEntry, MetadataInfo};
 
 const MAX_SVG_BYTES: usize = 32 * 1024 * 1024;
@@ -895,63 +896,10 @@ fn find_tag_end(text: &str, start: usize) -> Option<usize> {
     None
 }
 
-fn local_name(name: &str) -> &str {
-    name.rsplit_once(':')
-        .map(|(_, local)| local)
-        .unwrap_or(name)
-}
-
 fn matches_local_name(name: &str, targets: &[&str]) -> bool {
     targets
         .iter()
         .any(|target| local_name(name).eq_ignore_ascii_case(target))
-}
-
-fn decode_xml_entities(value: &str) -> String {
-    let mut out = String::with_capacity(value.len());
-    let mut rest = value;
-
-    while let Some(pos) = rest.find('&') {
-        out.push_str(&rest[..pos]);
-        let after = &rest[pos + 1..];
-        let Some(end) = after.find(';') else {
-            out.push('&');
-            rest = after;
-            continue;
-        };
-
-        let entity = &after[..end];
-        match entity {
-            "amp" => out.push('&'),
-            "lt" => out.push('<'),
-            "gt" => out.push('>'),
-            "quot" => out.push('"'),
-            "apos" => out.push('\''),
-            _ if entity.starts_with("#x") => {
-                if let Ok(code) = u32::from_str_radix(&entity[2..], 16) {
-                    if let Some(ch) = char::from_u32(code) {
-                        out.push(ch);
-                    }
-                }
-            }
-            _ if entity.starts_with('#') => {
-                if let Ok(code) = entity[1..].parse::<u32>() {
-                    if let Some(ch) = char::from_u32(code) {
-                        out.push(ch);
-                    }
-                }
-            }
-            _ => {
-                out.push('&');
-                out.push_str(entity);
-                out.push(';');
-            }
-        }
-        rest = &after[end + 1..];
-    }
-
-    out.push_str(rest);
-    out
 }
 
 fn is_xml_declaration(instruction: &str) -> bool {

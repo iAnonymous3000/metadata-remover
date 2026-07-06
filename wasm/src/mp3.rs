@@ -463,19 +463,36 @@ fn decode_text_frame(frame_data: &[u8]) -> Option<String> {
     }))
 }
 
+// COMM/USLT layout: encoding byte, 3-byte language code, description
+// (terminated per encoding), then the text body.
 fn decode_comment_like_frame(frame_data: &[u8]) -> Option<String> {
     let (&encoding, payload) = frame_data.split_first()?;
-    let text_start = payload.iter().position(|byte| *byte == 0).unwrap_or(3);
-    let payload = payload
-        .get(text_start.saturating_add(1)..)
-        .unwrap_or_default();
+    let after_language = payload.get(3..).unwrap_or_default();
     Some(clean_id3_text(match encoding {
-        0 => decode_latin1(payload),
-        1 => decode_utf16(payload, None),
-        2 => decode_utf16(payload, Some(false)),
-        3 => String::from_utf8_lossy(payload).to_string(),
+        0 => decode_latin1(skip_terminated_text(after_language, 1)),
+        1 => decode_utf16(skip_terminated_text(after_language, 2), None),
+        2 => decode_utf16(skip_terminated_text(after_language, 2), Some(false)),
+        3 => String::from_utf8_lossy(skip_terminated_text(after_language, 1)).to_string(),
         _ => String::new(),
     }))
+}
+
+fn skip_terminated_text(data: &[u8], terminator_width: usize) -> &[u8] {
+    if terminator_width == 2 {
+        let mut offset = 0;
+        while offset + 2 <= data.len() {
+            if data[offset] == 0 && data[offset + 1] == 0 {
+                return data.get(offset + 2..).unwrap_or_default();
+            }
+            offset += 2;
+        }
+        &[]
+    } else {
+        data.iter()
+            .position(|byte| *byte == 0)
+            .and_then(|pos| data.get(pos + 1..))
+            .unwrap_or_default()
+    }
 }
 
 fn decode_latin1(data: &[u8]) -> String {
@@ -647,6 +664,32 @@ mod tests {
         let cleaned = remove_metadata(&input).unwrap();
         assert_eq!(cleaned, audio);
         assert!(extract_metadata(&cleaned).metadata_found.is_empty());
+    }
+
+    #[test]
+    fn test_comment_frame_with_utf16_description_decodes_text() {
+        let audio = [0xff, 0xfb, 0x90, 0x64, 0, 1, 2, 3];
+        // encoding 1 (UTF-16 with BOM), language "eng", BOM+"d" description
+        // with a double-NUL terminator, then BOM + UTF-16LE text.
+        let mut comment = vec![1];
+        comment.extend_from_slice(b"eng");
+        comment.extend_from_slice(&[0xff, 0xfe, b'd', 0x00, 0x00, 0x00]);
+        comment.extend_from_slice(&[0xff, 0xfe]);
+        for byte in b"Secret note" {
+            comment.push(*byte);
+            comment.push(0);
+        }
+        let mut input = id3v24(&[frame(b"COMM", &comment)]);
+        input.extend_from_slice(&audio);
+
+        let info = extract_metadata(&input);
+        assert!(info
+            .metadata_found
+            .iter()
+            .any(|entry| entry.name == "Comment" && entry.value == "Secret note"));
+
+        let cleaned = remove_metadata(&input).unwrap();
+        assert_eq!(cleaned, audio);
     }
 
     #[test]

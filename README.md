@@ -15,7 +15,7 @@ Live demo: https://ianonymous3000.github.io/metadata-remover/
 - **AVIF** - removes identifiable EXIF, XMP, and Content Credentials metadata from ISO-BMFF image containers
 - **GIF** - removes comments, XMP blocks, and unknown application extensions
 - **HEIC/HEIF** - removes identifiable EXIF, XMP, and Content Credentials metadata from ISO-BMFF image containers
-- **TIFF** - removes EXIF, GPS, XMP, IPTC, camera, software, author, timestamp, and copyright tags from classic TIFF IFDs
+- **TIFF** - removes EXIF, GPS, XMP, IPTC, camera, software, author, timestamp, physical-resolution, and copyright tags from classic TIFF IFDs
 - **SVG** - removes metadata elements, title/description text, XML comments, processing instructions, active content, event handlers, external references, and common editor namespace attributes
 - **MP4/MOV** - removes QuickTime/MP4 user-data, Content Credentials boxes, metadata boxes, and recording timestamps while preserving media tracks
 - **MP3** - removes ID3v1/ID3v2, APEv2, and Lyrics3 tags, including title/artist/album/comment frames, private frames, and embedded artwork, while preserving MPEG audio frames

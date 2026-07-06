@@ -1696,9 +1696,7 @@ async function downloadAllFiles() {
             showDropFeedback(e.message || 'Unable to create ZIP file.');
         }
     } finally {
-        if (activeZipRequestId !== null) {
-            activeZipRequestId = null;
-        }
+        activeZipRequestId = null;
         zipDownloadInProgress = false;
         updateActions();
     }

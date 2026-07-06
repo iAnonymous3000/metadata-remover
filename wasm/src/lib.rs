@@ -10,6 +10,7 @@ mod pdf;
 mod png;
 mod svg;
 mod tiff;
+mod util;
 mod webp;
 
 // Magic bytes for file type detection

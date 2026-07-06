@@ -1,3 +1,4 @@
+use crate::util::{contains_ascii_ci, truncate_for_display};
 use crate::{MetadataEntry, MetadataInfo};
 
 const PNG_SIGNATURE: [u8; 8] = [0x89, 0x50, 0x4E, 0x47, 0x0D, 0x0A, 0x1A, 0x0A];
@@ -137,15 +138,6 @@ fn chunk_type_to_string(chunk_type: &[u8]) -> String {
     String::from_utf8_lossy(chunk_type).to_string()
 }
 
-fn contains_ascii_ci(haystack: &[u8], needle: &[u8]) -> bool {
-    if needle.is_empty() {
-        return true;
-    }
-    haystack
-        .windows(needle.len())
-        .any(|window| window.eq_ignore_ascii_case(needle))
-}
-
 fn is_content_credentials_chunk(chunk_type: &[u8], chunk_data: &[u8]) -> bool {
     matches!(chunk_type, b"jumb" | b"caBX")
         || contains_ascii_ci(chunk_data, b"c2pa")
@@ -158,16 +150,6 @@ fn decode_latin1(data: &[u8]) -> String {
         .filter(|&&b| b >= 0x20 && b != 0x7F)
         .map(|&b| b as char)
         .collect()
-}
-
-fn truncate_for_display(value: &str, max_chars: usize) -> String {
-    let mut chars = value.chars();
-    let truncated: String = chars.by_ref().take(max_chars).collect();
-    if chars.next().is_some() {
-        format!("{}...", truncated)
-    } else {
-        value.to_string()
-    }
 }
 
 pub fn extract_metadata(data: &[u8]) -> MetadataInfo {

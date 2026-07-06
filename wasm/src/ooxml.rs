@@ -1,3 +1,4 @@
+use crate::util::{decode_xml_entities, local_name, truncate_for_display};
 use crate::{MetadataEntry, MetadataInfo};
 use flate2::{read::DeflateDecoder, write::DeflateEncoder, Compression};
 use std::collections::{BTreeMap, BTreeSet};
@@ -1928,69 +1929,6 @@ fn attr_value(attrs: &[XmlAttr], local: &str) -> Option<String> {
         .iter()
         .find(|attr| local_name(&attr.name) == local)
         .map(|attr| attr.value.clone())
-}
-
-fn local_name(name: &str) -> &str {
-    name.rsplit_once(':')
-        .map(|(_, local)| local)
-        .unwrap_or(name)
-}
-
-fn decode_xml_entities(value: &str) -> String {
-    let mut out = String::with_capacity(value.len());
-    let mut rest = value;
-
-    while let Some(pos) = rest.find('&') {
-        out.push_str(&rest[..pos]);
-        let after = &rest[pos + 1..];
-        let Some(end) = after.find(';') else {
-            out.push('&');
-            rest = after;
-            continue;
-        };
-
-        let entity = &after[..end];
-        match entity {
-            "amp" => out.push('&'),
-            "lt" => out.push('<'),
-            "gt" => out.push('>'),
-            "quot" => out.push('"'),
-            "apos" => out.push('\''),
-            _ if entity.starts_with("#x") => {
-                if let Ok(code) = u32::from_str_radix(&entity[2..], 16) {
-                    if let Some(ch) = char::from_u32(code) {
-                        out.push(ch);
-                    }
-                }
-            }
-            _ if entity.starts_with('#') => {
-                if let Ok(code) = entity[1..].parse::<u32>() {
-                    if let Some(ch) = char::from_u32(code) {
-                        out.push(ch);
-                    }
-                }
-            }
-            _ => {
-                out.push('&');
-                out.push_str(entity);
-                out.push(';');
-            }
-        }
-        rest = &after[end + 1..];
-    }
-
-    out.push_str(rest);
-    out
-}
-
-fn truncate_for_display(value: &str, max_chars: usize) -> String {
-    let mut chars = value.chars();
-    let truncated: String = chars.by_ref().take(max_chars).collect();
-    if chars.next().is_some() {
-        format!("{}...", truncated)
-    } else {
-        value.to_string()
-    }
 }
 
 fn read_u16_le(data: &[u8], offset: usize) -> Result<u16, String> {

@@ -1,3 +1,4 @@
+use crate::util::contains_ascii_ci;
 use crate::{MetadataEntry, MetadataInfo};
 
 // JPEG marker constants
@@ -43,15 +44,6 @@ fn parse_exif_value(data: &[u8]) -> String {
         }
     }
     format!("[{} bytes]", data.len())
-}
-
-fn contains_ascii_ci(haystack: &[u8], needle: &[u8]) -> bool {
-    if needle.is_empty() {
-        return true;
-    }
-    haystack
-        .windows(needle.len())
-        .any(|window| window.eq_ignore_ascii_case(needle))
 }
 
 fn is_content_credentials_segment(marker: u8, segment_data: &[u8]) -> bool {

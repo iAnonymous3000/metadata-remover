@@ -1,5 +1,6 @@
+use crate::util::contains_ascii_ci;
 use crate::{MetadataEntry, MetadataInfo};
-use std::collections::BTreeSet;
+use std::collections::{BTreeMap, BTreeSet};
 
 const MAX_BOXES: usize = 20_000;
 const MAX_DEPTH: usize = 8;
@@ -225,20 +226,56 @@ fn collect_heif_metadata(data: &[u8], entries: &mut Vec<MetadataEntry>, total_by
     let Ok(items) = heif_items(data, &meta) else {
         return;
     };
+    let metadata_ids: BTreeSet<u32> = items
+        .iter()
+        .filter(|item| is_heif_metadata_item(item))
+        .map(|item| item.id)
+        .collect();
+    if metadata_ids.is_empty() {
+        return;
+    }
+
+    let extent_bytes = heif_metadata_extent_bytes(data, &meta, &metadata_ids);
     for item in items {
-        if is_heif_metadata_item(&item) {
-            entries.push(MetadataEntry {
-                category: "HEIF metadata".to_string(),
-                name: heif_item_label(&item).to_string(),
-                value: if item.name.is_empty() {
-                    format!("item {}", item.id)
-                } else {
-                    item.name.clone()
-                },
-            });
-            *total_bytes += 1;
+        if !is_heif_metadata_item(&item) {
+            continue;
+        }
+        let size = extent_bytes.get(&item.id).copied().unwrap_or(0);
+        let label = if item.name.is_empty() {
+            format!("item {}", item.id)
+        } else {
+            item.name.clone()
+        };
+        entries.push(MetadataEntry {
+            category: "HEIF metadata".to_string(),
+            name: heif_item_label(&item).to_string(),
+            value: if size > 0 {
+                format!("{label}, {size} bytes")
+            } else {
+                label
+            },
+        });
+        *total_bytes += size;
+    }
+}
+
+fn heif_metadata_extent_bytes(
+    data: &[u8],
+    meta: &BoxInfo,
+    metadata_ids: &BTreeSet<u32>,
+) -> BTreeMap<u32, usize> {
+    let mut bytes = BTreeMap::new();
+    let Ok(extents) = iloc_extents(data, meta) else {
+        return bytes;
+    };
+    for extent in extents {
+        if metadata_ids.contains(&extent.item_id) {
+            let length = usize::try_from(extent.extent_length).unwrap_or(usize::MAX);
+            let total = bytes.entry(extent.item_id).or_insert(0usize);
+            *total = total.saturating_add(length);
         }
     }
+    bytes
 }
 
 fn collect_top_level_content_credentials(
@@ -342,10 +379,51 @@ fn zero_heif_item_extents(
     meta: &BoxInfo,
     metadata_ids: &BTreeSet<u32>,
 ) -> Result<BTreeSet<u32>, String> {
-    let Some(iloc) = find_child_box(source, meta, *b"iloc")? else {
-        return Ok(BTreeSet::new());
-    };
     let idat = find_child_box(source, meta, *b"idat")?;
+    let mut cleared_ids = BTreeSet::new();
+    let mut failed_ids = BTreeSet::new();
+
+    for extent in iloc_extents(source, meta)? {
+        if !metadata_ids.contains(&extent.item_id) {
+            continue;
+        }
+
+        let range = heif_extent_range(
+            &idat,
+            extent.construction_method,
+            extent.base_offset,
+            extent.extent_offset,
+            extent.extent_length,
+        )
+        .filter(|(_, end)| *end <= out.len());
+
+        if let Some((start, end)) = range {
+            out[start..end].fill(0);
+            cleared_ids.insert(extent.item_id);
+        } else {
+            failed_ids.insert(extent.item_id);
+        }
+    }
+
+    for item_id in failed_ids {
+        cleared_ids.remove(&item_id);
+    }
+
+    Ok(cleared_ids)
+}
+
+struct IlocExtent {
+    item_id: u32,
+    construction_method: u64,
+    base_offset: u64,
+    extent_offset: u64,
+    extent_length: u64,
+}
+
+fn iloc_extents(source: &[u8], meta: &BoxInfo) -> Result<Vec<IlocExtent>, String> {
+    let Some(iloc) = find_child_box(source, meta, *b"iloc")? else {
+        return Ok(vec![]);
+    };
     let version = source
         .get(iloc.start + iloc.header_size)
         .copied()
@@ -374,9 +452,7 @@ fn zero_heif_item_extents(
     };
     offset += if version < 2 { 2 } else { 4 };
 
-    let mut cleared_ids = BTreeSet::new();
-    let mut failed_ids = BTreeSet::new();
-
+    let mut extents = Vec::new();
     for _ in 0..item_count {
         let item_id = if version < 2 {
             read_be(source, offset, 2)? as u32
@@ -396,9 +472,6 @@ fn zero_heif_item_extents(
         offset += base_offset_size;
         let extent_count = read_be(source, offset, 2)? as usize;
         offset += 2;
-        let is_metadata_item = metadata_ids.contains(&item_id);
-        let mut item_clearable = is_metadata_item;
-        let mut saw_extent = false;
 
         for _ in 0..extent_count {
             if index_size > 0 {
@@ -408,39 +481,17 @@ fn zero_heif_item_extents(
             offset += offset_size;
             let extent_length = read_be(source, offset, length_size)?;
             offset += length_size;
-
-            if is_metadata_item {
-                saw_extent = true;
-                if let Some((start, end)) = heif_extent_range(
-                    &idat,
-                    construction_method,
-                    base_offset,
-                    extent_offset,
-                    extent_length,
-                ) {
-                    if end <= out.len() {
-                        out[start..end].fill(0);
-                    } else {
-                        item_clearable = false;
-                    }
-                } else {
-                    item_clearable = false;
-                }
-            }
-        }
-
-        if is_metadata_item && saw_extent && item_clearable {
-            cleared_ids.insert(item_id);
-        } else if is_metadata_item {
-            failed_ids.insert(item_id);
+            extents.push(IlocExtent {
+                item_id,
+                construction_method,
+                base_offset,
+                extent_offset,
+                extent_length,
+            });
         }
     }
 
-    for item_id in failed_ids {
-        cleared_ids.remove(&item_id);
-    }
-
-    Ok(cleared_ids)
+    Ok(extents)
 }
 
 fn heif_extent_range(
@@ -685,18 +736,6 @@ fn is_content_credentials_box(data: &[u8], info: &BoxInfo) -> bool {
 
 fn is_video_text_metadata_box(data: &[u8], info: &BoxInfo) -> bool {
     info.kind == *b"uuid" && box_contains_text_metadata(data, info)
-}
-
-fn contains_ascii_ci(haystack: &[u8], needle: &[u8]) -> bool {
-    if needle.is_empty() || haystack.len() < needle.len() {
-        return false;
-    }
-    haystack.windows(needle.len()).any(|window| {
-        window
-            .iter()
-            .zip(needle)
-            .all(|(a, b)| a.eq_ignore_ascii_case(b))
-    })
 }
 
 fn replace_with_free(out: &mut [u8], info: &BoxInfo) -> Result<(), String> {
@@ -1138,7 +1177,10 @@ mod tests {
         data.extend_from_slice(&meta);
         data.extend_from_slice(&box_bytes(b"mdat", mdat_payload));
 
-        assert!(!extract_metadata(&data, "heic").metadata_found.is_empty());
+        let info = extract_metadata(&data, "heic");
+        assert!(!info.metadata_found.is_empty());
+        assert_eq!(info.total_metadata_bytes, mdat_payload.len());
+
         let cleaned = remove_metadata(&data, "heic").unwrap();
         assert!(!cleaned.windows(b"Exif".len()).any(|w| w == b"Exif"));
         assert!(!cleaned
