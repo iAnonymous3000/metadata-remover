@@ -281,11 +281,7 @@ pub fn remove_metadata(data: &[u8]) -> Result<Vec<u8>, String> {
                 changed.insert(name.to_string(), cleaned.into_bytes());
             }
         }
-
-        return build_zip(&archive, &removed, &changed);
-    }
-
-    if kind == OoxmlKind::Epub {
+    } else if kind == OoxmlKind::Epub {
         for entry in &archive.entries {
             if is_epub_removed_part(&entry.name) {
                 removed.insert(entry.name.clone());
@@ -301,46 +297,72 @@ pub fn remove_metadata(data: &[u8]) -> Result<Vec<u8>, String> {
         if cleaned != xml {
             changed.insert(package_path, cleaned.into_bytes());
         }
-
-        return build_zip(&archive, &removed, &changed);
-    }
-
-    for entry in &archive.entries {
-        if is_document_property_part(&entry.name) || is_removed_part_for_kind(&entry.name, kind) {
-            removed.insert(entry.name.clone());
+    } else {
+        for entry in &archive.entries {
+            if is_document_property_part(&entry.name) || is_removed_part_for_kind(&entry.name, kind)
+            {
+                removed.insert(entry.name.clone());
+            }
         }
-    }
 
-    if let Some(xml) = archive.read_xml("[Content_Types].xml")? {
-        let cleaned = clean_content_types(&xml, kind);
-        if cleaned != xml {
-            changed.insert("[Content_Types].xml".to_string(), cleaned.into_bytes());
+        if let Some(xml) = archive.read_xml("[Content_Types].xml")? {
+            let cleaned = clean_content_types(&xml, kind);
+            if cleaned != xml {
+                changed.insert("[Content_Types].xml".to_string(), cleaned.into_bytes());
+            }
         }
-    }
 
-    for name in relationship_part_names(&archive) {
-        let Some(xml) = archive.read_xml(&name)? else {
-            continue;
-        };
-        let cleaned = clean_relationships(&xml, kind, &name);
-        if cleaned != xml {
-            changed.insert(name, cleaned.into_bytes());
-        }
-    }
-
-    if kind == OoxmlKind::Docx {
-        for name in docx_editable_part_names(&archive) {
+        for name in relationship_part_names(&archive) {
             let Some(xml) = archive.read_xml(&name)? else {
                 continue;
             };
-            let cleaned = clean_word_content(&xml);
+            let cleaned = clean_relationships(&xml, kind, &name);
             if cleaned != xml {
                 changed.insert(name, cleaned.into_bytes());
             }
         }
+
+        if kind == OoxmlKind::Docx {
+            for name in docx_editable_part_names(&archive) {
+                let Some(xml) = archive.read_xml(&name)? else {
+                    continue;
+                };
+                let cleaned = clean_word_content(&xml);
+                if cleaned != xml {
+                    changed.insert(name, cleaned.into_bytes());
+                }
+            }
+        }
     }
 
+    clean_embedded_images(&archive, &removed, &mut changed);
     build_zip(&archive, &removed, &changed)
+}
+
+// Recursively clean packaged images with the matching format parser. Images
+// that cannot be read or cleaned are left in place; extraction flags them so
+// the post-clean re-scan keeps the result in review instead of claiming clean.
+fn clean_embedded_images(
+    archive: &ZipArchive<'_>,
+    removed: &BTreeSet<String>,
+    changed: &mut BTreeMap<String, Vec<u8>>,
+) {
+    for entry in &archive.entries {
+        if !is_embedded_image_candidate(&entry.name) || removed.contains(&entry.name) {
+            continue;
+        }
+        let Ok(Some(data)) = archive.read_entry(&entry.name, MAX_EMBEDDED_IMAGE_BYTES) else {
+            continue;
+        };
+        if !is_cleanable_embedded_image_type(&crate::detect_file_type(&data)) {
+            continue;
+        }
+        if let Ok(cleaned) = crate::remove_metadata_bytes(&data) {
+            if cleaned != data {
+                changed.insert(entry.name.clone(), cleaned);
+            }
+        }
+    }
 }
 
 fn parse_archive(data: &[u8]) -> Result<ZipArchive<'_>, String> {
@@ -1072,28 +1094,25 @@ fn collect_embedded_image_metadata(
     entries: &mut Vec<MetadataEntry>,
     total_bytes: &mut usize,
 ) {
-    let mut embedded_image_count = 0usize;
-    let mut scanned_image_count = 0usize;
+    let mut unverifiable_count = 0usize;
 
     for entry in &archive.entries {
-        let Some(image_type) = embedded_image_type(&entry.name) else {
+        if !is_embedded_image_candidate(&entry.name) {
             continue;
-        };
-        embedded_image_count += 1;
+        }
         let Ok(Some(data)) = archive.read_entry(&entry.name, MAX_EMBEDDED_IMAGE_BYTES) else {
+            unverifiable_count += 1;
             continue;
         };
-        scanned_image_count += 1;
+        // Content detection, not the extension, decides how the image is
+        // scanned and cleaned so mislabeled files cannot slip through.
+        let detected = crate::detect_file_type(&data);
+        if !is_cleanable_embedded_image_type(&detected) {
+            unverifiable_count += 1;
+            continue;
+        }
 
-        let info = match image_type {
-            "jpeg" => crate::jpeg::extract_metadata(&data),
-            "png" => crate::png::extract_metadata(&data),
-            "webp" => crate::webp::extract_metadata(&data),
-            "gif" => crate::gif::extract_metadata(&data),
-            "tiff" => crate::tiff::extract_metadata(&data),
-            "svg" => crate::svg::extract_metadata(&data),
-            _ => continue,
-        };
+        let info = crate::extract_detected_metadata(&data, &detected);
         if info.metadata_found.is_empty() {
             continue;
         }
@@ -1103,53 +1122,50 @@ fn collect_embedded_image_metadata(
         entries.push(MetadataEntry {
             category: "Embedded image metadata".to_string(),
             name: entry.name.clone(),
-            value: format!("{embedded_count} metadata entries inside packaged image"),
+            value: format!(
+                "{embedded_count} metadata entries inside packaged image; removed during cleaning"
+            ),
         });
         for embedded in info.metadata_found {
-            entries.push(MetadataEntry {
-                category: format!("Embedded image metadata: {}", embedded.category),
-                name: format!("{}: {}", entry.name, embedded.name),
-                value: embedded.value,
-            });
+            if embedded.category == LIMITED_VERIFICATION_CATEGORY {
+                entries.push(MetadataEntry {
+                    category: LIMITED_VERIFICATION_CATEGORY.to_string(),
+                    name: format!("{}: {}", entry.name, embedded.name),
+                    value: embedded.value,
+                });
+            } else {
+                entries.push(MetadataEntry {
+                    category: format!("Embedded image metadata: {}", embedded.category),
+                    name: format!("{}: {}", entry.name, embedded.name),
+                    value: embedded.value,
+                });
+            }
         }
     }
 
-    if embedded_image_count > 0 {
+    if unverifiable_count > 0 {
         entries.push(MetadataEntry {
             category: LIMITED_VERIFICATION_CATEGORY.to_string(),
             name: "Embedded package images".to_string(),
-            value: embedded_image_limited_verification_value(
-                embedded_image_count,
-                scanned_image_count,
+            value: format!(
+                "{unverifiable_count} packaged image(s) preserved without cleaning because the content could not be read as a supported image format"
             ),
         });
     }
 }
 
-fn embedded_image_limited_verification_value(total: usize, scanned: usize) -> String {
-    let unscanned = total.saturating_sub(scanned);
-    if unscanned == 0 {
-        return format!(
-            "{total} packaged image(s) preserved; {scanned} scanned for supported metadata; not recursively cleaned"
-        );
-    }
-
-    format!(
-        "{total} packaged image(s) preserved; {scanned} scanned for supported metadata; {unscanned} not scanned due to archive read or size limits; not recursively cleaned"
+fn is_embedded_image_candidate(name: &str) -> bool {
+    let Some((_, extension)) = name.rsplit_once('.') else {
+        return false;
+    };
+    matches!(
+        extension.to_ascii_lowercase().as_str(),
+        "jpg" | "jpeg" | "png" | "webp" | "gif" | "tif" | "tiff" | "svg"
     )
 }
 
-fn embedded_image_type(name: &str) -> Option<&'static str> {
-    let extension = name.rsplit_once('.')?.1.to_ascii_lowercase();
-    match extension.as_str() {
-        "jpg" | "jpeg" => Some("jpeg"),
-        "png" => Some("png"),
-        "webp" => Some("webp"),
-        "gif" => Some("gif"),
-        "tif" | "tiff" => Some("tiff"),
-        "svg" => Some("svg"),
-        _ => None,
-    }
+fn is_cleanable_embedded_image_type(file_type: &str) -> bool {
+    matches!(file_type, "jpeg" | "png" | "webp" | "gif" | "tiff" | "svg")
 }
 
 fn removable_epub_metadata_entries(xml: &str) -> Vec<MetadataEntry> {
@@ -2336,76 +2352,85 @@ mod tests {
         );
     }
 
-    #[test]
-    fn test_embedded_docx_image_metadata_is_flagged_after_cleaning() {
+    fn docx_with_media(media: &[(&str, &[u8])]) -> Vec<u8> {
         let content_types = br#"<Types xmlns="http://schemas.openxmlformats.org/package/2006/content-types"><Override PartName="/word/document.xml" ContentType="application/vnd.openxmlformats-officedocument.wordprocessingml.document.main+xml"/></Types>"#;
         let rels = br#"<Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships"><Relationship Id="rId1" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/officeDocument" Target="word/document.xml"/></Relationships>"#;
         let document = br#"<w:document xmlns:w="http://schemas.openxmlformats.org/wordprocessingml/2006/main"><w:body><w:p><w:r><w:t>Keep me</w:t></w:r></w:p></w:body></w:document>"#;
-        let image = sample_jpeg_with_xmp();
-        let input = stored_zip(&[
+        let mut entries: Vec<(&str, &[u8])> = vec![
             ("[Content_Types].xml", content_types),
             ("_rels/.rels", rels),
             ("word/document.xml", document),
-            ("word/media/image1.jpg", image.as_slice()),
-        ]);
+        ];
+        entries.extend_from_slice(media);
+        stored_zip(&entries)
+    }
+
+    #[test]
+    fn test_embedded_docx_image_metadata_is_recursively_cleaned() {
+        let image = sample_jpeg_with_xmp();
+        let input = docx_with_media(&[("word/media/image1.jpg", image.as_slice())]);
 
         assert_eq!(detect_file_type(&input), Some("docx"));
         let info = extract_metadata(&input);
         assert!(info
             .metadata_found
             .iter()
-            .any(|entry| entry.category.starts_with("Embedded image metadata")));
-        assert!(info
-            .metadata_found
-            .iter()
             .any(|entry| entry.name.contains("word/media/image1.jpg: XMP Data")));
-
-        let cleaned = remove_metadata(&input).unwrap();
-        let verification = extract_metadata(&cleaned);
-        assert!(verification
-            .metadata_found
-            .iter()
-            .any(|entry| entry.name.contains("word/media/image1.jpg")));
-    }
-
-    #[test]
-    fn test_clean_embedded_docx_image_gets_limited_verification_note() {
-        let content_types = br#"<Types xmlns="http://schemas.openxmlformats.org/package/2006/content-types"><Override PartName="/word/document.xml" ContentType="application/vnd.openxmlformats-officedocument.wordprocessingml.document.main+xml"/></Types>"#;
-        let rels = br#"<Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships"><Relationship Id="rId1" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/officeDocument" Target="word/document.xml"/></Relationships>"#;
-        let document = br#"<w:document xmlns:w="http://schemas.openxmlformats.org/wordprocessingml/2006/main"><w:body><w:p><w:r><w:t>Keep me</w:t></w:r></w:p></w:body></w:document>"#;
-        let image = sample_clean_jpeg();
-        let input = stored_zip(&[
-            ("[Content_Types].xml", content_types),
-            ("_rels/.rels", rels),
-            ("word/document.xml", document),
-            ("word/media/image1.jpg", image.as_slice()),
-        ]);
-
-        let info = extract_metadata(&input);
-        let note = info
-            .metadata_found
-            .iter()
-            .find(|entry| {
-                entry.category == LIMITED_VERIFICATION_CATEGORY
-                    && entry.name == "Embedded package images"
-            })
-            .expect("limited verification note");
-        assert!(note.value.contains("1 scanned for supported metadata"));
         assert!(!info
             .metadata_found
             .iter()
-            .any(|entry| entry.category.starts_with("Embedded image metadata")));
+            .any(|entry| entry.category == LIMITED_VERIFICATION_CATEGORY));
 
         let cleaned = remove_metadata(&input).unwrap();
+        assert!(!cleaned
+            .windows(b"Hidden Cover Author".len())
+            .any(|w| w == b"Hidden Cover Author"));
+        validate(&cleaned).unwrap();
         let verification = extract_metadata(&cleaned);
-        assert!(verification.metadata_found.iter().any(|entry| {
-            entry.category == LIMITED_VERIFICATION_CATEGORY
-                && entry.name == "Embedded package images"
-        }));
+        assert!(
+            verification.metadata_found.is_empty(),
+            "remaining metadata: {:?}",
+            verification.metadata_found
+        );
     }
 
     #[test]
-    fn test_embedded_docx_image_note_reports_unscanned_images() {
+    fn test_mislabeled_embedded_image_is_cleaned_by_content_type() {
+        // JPEG bytes stored under a .png name: content detection must win.
+        let image = sample_jpeg_with_xmp();
+        let input = docx_with_media(&[("word/media/picture.png", image.as_slice())]);
+
+        let info = extract_metadata(&input);
+        assert!(info
+            .metadata_found
+            .iter()
+            .any(|entry| entry.name.contains("word/media/picture.png: XMP Data")));
+
+        let cleaned = remove_metadata(&input).unwrap();
+        assert!(!cleaned
+            .windows(b"Hidden Cover Author".len())
+            .any(|w| w == b"Hidden Cover Author"));
+        assert!(extract_metadata(&cleaned).metadata_found.is_empty());
+    }
+
+    #[test]
+    fn test_clean_embedded_docx_image_needs_no_review_note() {
+        let image = sample_clean_jpeg();
+        let input = docx_with_media(&[("word/media/image1.jpg", image.as_slice())]);
+
+        let info = extract_metadata(&input);
+        assert!(
+            info.metadata_found.is_empty(),
+            "unexpected entries: {:?}",
+            info.metadata_found
+        );
+
+        let cleaned = remove_metadata(&input).unwrap();
+        assert!(extract_metadata(&cleaned).metadata_found.is_empty());
+    }
+
+    #[test]
+    fn test_unreadable_embedded_image_keeps_limited_verification_note() {
         let content_types = br#"<Types xmlns="http://schemas.openxmlformats.org/package/2006/content-types"><Override PartName="/word/document.xml" ContentType="application/vnd.openxmlformats-officedocument.wordprocessingml.document.main+xml"/></Types>"#;
         let rels = br#"<Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships"><Relationship Id="rId1" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/officeDocument" Target="word/document.xml"/></Relationships>"#;
         let document = br#"<w:document xmlns:w="http://schemas.openxmlformats.org/wordprocessingml/2006/main"><w:body><w:p><w:r><w:t>Keep me</w:t></w:r></w:p></w:body></w:document>"#;
@@ -2427,17 +2452,31 @@ mod tests {
                     && entry.name == "Embedded package images"
             })
             .expect("limited verification note");
-
-        assert!(note.value.contains("1 packaged image(s) preserved"));
-        assert!(note.value.contains("0 scanned for supported metadata"));
         assert!(note
             .value
-            .contains("1 not scanned due to archive read or size limits"));
-        assert!(!note.value.contains("embedded image bytes are scanned"));
-        assert!(!info
+            .contains("1 packaged image(s) preserved without cleaning"));
+    }
+
+    #[test]
+    fn test_unsupported_embedded_image_content_keeps_limited_verification_note() {
+        let input = docx_with_media(&[("word/media/odd.jpg", b"not an image at all")]);
+
+        let info = extract_metadata(&input);
+        assert!(info.metadata_found.iter().any(|entry| {
+            entry.category == LIMITED_VERIFICATION_CATEGORY
+                && entry.name == "Embedded package images"
+        }));
+
+        // The opaque bytes are preserved and stay flagged after cleaning.
+        let cleaned = remove_metadata(&input).unwrap();
+        assert!(cleaned
+            .windows(b"not an image at all".len())
+            .any(|w| w == b"not an image at all"));
+        assert!(extract_metadata(&cleaned)
             .metadata_found
             .iter()
-            .any(|entry| entry.category.starts_with("Embedded image metadata")));
+            .any(|entry| entry.category == LIMITED_VERIFICATION_CATEGORY
+                && entry.name == "Embedded package images"));
     }
 
     #[test]
@@ -2800,7 +2839,7 @@ mod tests {
     }
 
     #[test]
-    fn test_epub_cover_image_metadata_is_flagged_after_package_cleaning() {
+    fn test_epub_cover_image_metadata_is_recursively_cleaned() {
         let mimetype = b"application/epub+zip";
         let container = br#"<?xml version="1.0" encoding="UTF-8"?>
 <container xmlns="urn:oasis:names:tc:opendocument:xmlns:container" version="1.0">
@@ -2828,12 +2867,16 @@ mod tests {
         ]);
 
         let cleaned = remove_metadata(&input).unwrap();
-        let verification = extract_metadata(&cleaned);
-        assert!(verification
-            .metadata_found
-            .iter()
-            .any(|entry| entry.name.contains("OPS/images/cover.jpg: XMP Data")));
+        assert!(!cleaned
+            .windows(b"Hidden Cover Author".len())
+            .any(|w| w == b"Hidden Cover Author"));
         assert!(!String::from_utf8_lossy(&cleaned).contains("secret-device-id"));
+        let verification = extract_metadata(&cleaned);
+        assert!(
+            verification.metadata_found.is_empty(),
+            "remaining metadata: {:?}",
+            verification.metadata_found
+        );
     }
 
     #[test]

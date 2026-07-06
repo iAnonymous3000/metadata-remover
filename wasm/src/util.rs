@@ -80,6 +80,68 @@ pub fn truncate_for_display(value: &str, max_chars: usize) -> String {
     }
 }
 
+const BASE64_ALPHABET: &[u8; 64] =
+    b"ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
+
+/// Decodes standard base64 (padding optional, ASCII whitespace ignored).
+/// Returns None on any character outside the standard alphabet.
+pub fn base64_decode(input: &str) -> Option<Vec<u8>> {
+    let mut out = Vec::with_capacity(input.len() / 4 * 3);
+    let mut buffer = 0u32;
+    let mut bits = 0u8;
+
+    for byte in input.bytes() {
+        if byte.is_ascii_whitespace() {
+            continue;
+        }
+        if byte == b'=' {
+            break;
+        }
+        let value = match byte {
+            b'A'..=b'Z' => byte - b'A',
+            b'a'..=b'z' => byte - b'a' + 26,
+            b'0'..=b'9' => byte - b'0' + 52,
+            b'+' => 62,
+            b'/' => 63,
+            _ => return None,
+        } as u32;
+        buffer = (buffer << 6) | value;
+        bits += 6;
+        if bits >= 8 {
+            bits -= 8;
+            out.push((buffer >> bits) as u8);
+        }
+    }
+
+    Some(out)
+}
+
+/// Encodes bytes as standard padded base64.
+pub fn base64_encode(data: &[u8]) -> String {
+    let mut out = String::with_capacity(data.len().div_ceil(3) * 4);
+    for chunk in data.chunks(3) {
+        let bytes = [
+            chunk[0],
+            chunk.get(1).copied().unwrap_or(0),
+            chunk.get(2).copied().unwrap_or(0),
+        ];
+        let value = ((bytes[0] as u32) << 16) | ((bytes[1] as u32) << 8) | (bytes[2] as u32);
+        out.push(BASE64_ALPHABET[(value >> 18) as usize & 0x3f] as char);
+        out.push(BASE64_ALPHABET[(value >> 12) as usize & 0x3f] as char);
+        out.push(if chunk.len() > 1 {
+            BASE64_ALPHABET[(value >> 6) as usize & 0x3f] as char
+        } else {
+            '='
+        });
+        out.push(if chunk.len() > 2 {
+            BASE64_ALPHABET[value as usize & 0x3f] as char
+        } else {
+            '='
+        });
+    }
+    out
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -108,5 +170,23 @@ mod tests {
     fn truncate_for_display_appends_ellipsis_only_when_cut() {
         assert_eq!(truncate_for_display("short", 10), "short");
         assert_eq!(truncate_for_display("longvalue", 4), "long...");
+    }
+
+    #[test]
+    fn base64_round_trips_and_rejects_invalid_input() {
+        for data in [
+            &b""[..],
+            b"f",
+            b"fo",
+            b"foo",
+            b"foob",
+            b"binary\x00\xff\x7f",
+        ] {
+            let encoded = base64_encode(data);
+            assert_eq!(base64_decode(&encoded).unwrap(), data);
+        }
+        assert_eq!(base64_decode("Zm9v\nYmFy").unwrap(), b"foobar");
+        assert_eq!(base64_decode("Zm9vYg==").unwrap(), b"foob");
+        assert!(base64_decode("not*valid").is_none());
     }
 }

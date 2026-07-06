@@ -49,10 +49,10 @@ test('minimal docs keep parser limits visible without extra planning files', asy
     assert.match(readme, /AVIF, HEIC\/HEIF, and MP4\/MOV cleaning target known ISO-BMFF metadata structures/);
     assert.match(readme, /EPUB cleaning preserves required package fields/);
     assert.match(readme, /MP3, FLAC, and WAV are supported; OGG\/Opus is not supported yet/);
-    assert.match(readme, /Embedded images inside Office, ODF, and EPUB packages are scanned and flagged/);
+    assert.match(readme, /Embedded images inside Office, ODF, and EPUB packages are recursively cleaned/);
     assert.match(readme, /Visual verification is limited to browser-renderable JPEG, PNG, WebP, AVIF, GIF, and cleaned SVG previews/);
     assert.match(readme, /SVG active content and external references are removed/);
-    assert.match(readme, /SVG embedded raster images are not decoded/);
+    assert.match(readme, /SVG base64 data URIs holding supported raster images are decoded, recursively cleaned/);
     assert.match(readme, /Unknown\/private TIFF tags and uncommon or `ftyp`-less video variants/);
     assert.match(readme, /does not detect steganographic content/);
 });

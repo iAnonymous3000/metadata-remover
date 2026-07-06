@@ -78,10 +78,10 @@ The GitHub Pages deployment cannot apply Cloudflare Pages or Netlify `_headers` 
 - AVIF, HEIC/HEIF, and MP4/MOV cleaning target known ISO-BMFF metadata structures this parser can identify.
 - EPUB cleaning preserves required package fields by normalizing identifiers and modified timestamps to neutral values.
 - MP3, FLAC, and WAV are supported; OGG/Opus is not supported yet. Encoder signatures embedded inside audio frames (such as LAME headers) are preserved.
-- Embedded images inside Office, ODF, and EPUB packages are scanned and flagged when supported image metadata is detected, but they are not recursively cleaned and keep the result in review.
+- Embedded images inside Office, ODF, and EPUB packages are recursively cleaned when their content is a supported image format; unreadable or unsupported embedded files are preserved, flagged, and keep the result in review.
 - Visual verification is limited to browser-renderable JPEG, PNG, WebP, AVIF, GIF, and cleaned SVG previews, and runs after cleaning when local memory headroom allows.
 - SVG active content and external references are removed, which can change interactive or externally styled SVGs.
-- SVG embedded raster images are not decoded; SVG data URIs are preserved and keep the result in review.
+- SVG base64 data URIs holding supported raster images are decoded, recursively cleaned, and re-encoded; other data URI content (CSS references, non-base64 payloads, nested SVG) is preserved and keeps the result in review.
 - Unknown/private TIFF tags and uncommon or `ftyp`-less video variants may be preserved or rejected.
 - Legacy binary Office files (`.doc`, `.xls`, `.ppt`) are not supported; save them as `.docx`, `.xlsx`, or `.pptx` first.
 - This tool removes structural metadata; it does not detect steganographic content embedded in pixels or document bodies.

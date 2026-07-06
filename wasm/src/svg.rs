@@ -1,4 +1,4 @@
-use crate::util::{decode_xml_entities, local_name};
+use crate::util::{base64_decode, base64_encode, decode_xml_entities, local_name};
 use crate::{MetadataEntry, MetadataInfo};
 
 const MAX_SVG_BYTES: usize = 32 * 1024 * 1024;
@@ -146,16 +146,7 @@ pub fn extract_metadata(data: &[u8]) -> MetadataInfo {
         });
     }
 
-    let embedded_data_uri_count = count_embedded_data_uri_references(text);
-    if embedded_data_uri_count > 0 {
-        entries.push(MetadataEntry {
-            category: LIMITED_VERIFICATION_CATEGORY.to_string(),
-            name: "Embedded data URI content".to_string(),
-            value: format!(
-                "{embedded_data_uri_count} data URI reference(s) preserved; embedded raster metadata is not decoded"
-            ),
-        });
-    }
+    collect_embedded_data_uri_metadata(text, &mut entries, &mut total_bytes);
 
     MetadataInfo {
         file_type: "svg".to_string(),
@@ -174,7 +165,8 @@ pub fn remove_metadata(data: &[u8]) -> Result<Vec<u8>, String> {
     let without_active_closings = remove_closing_elements_any(&without_active, &ACTIVE_ELEMENTS);
     let without_external_styles = remove_external_style_elements(&without_active_closings);
     let without_attrs = strip_removable_attrs(&without_external_styles);
-    Ok(without_attrs.into_bytes())
+    let with_clean_data_uris = clean_embedded_data_uri_images(&without_attrs);
+    Ok(with_clean_data_uris.into_bytes())
 }
 
 fn svg_text(data: &[u8]) -> Result<&str, String> {
@@ -497,8 +489,12 @@ fn count_removable_attrs(text: &str) -> usize {
     count
 }
 
-fn count_embedded_data_uri_references(text: &str) -> usize {
-    let mut count = 0usize;
+fn collect_embedded_data_uri_metadata(
+    text: &str,
+    entries: &mut Vec<MetadataEntry>,
+    total_bytes: &mut usize,
+) {
+    let mut opaque_count = 0usize;
     let mut search = 0usize;
     while let Some(relative) = text[search..].find('<') {
         let start = search + relative;
@@ -510,13 +506,113 @@ fn count_embedded_data_uri_references(text: &str) -> usize {
             search = start + 1;
             continue;
         };
-        count += parse_attrs(text, attrs_start, attrs_end)
-            .into_iter()
-            .filter(is_embedded_data_uri_attr)
-            .count();
+        for attr in parse_attrs(text, attrs_start, attrs_end) {
+            let local = local_name(&attr.name);
+            if is_url_attr(local) && is_data_uri_value(&attr.value) {
+                match verifiable_data_uri_info(&text[attr.value_start..attr.value_end]) {
+                    Some(info) if info.metadata_found.is_empty() => {}
+                    Some(info) => {
+                        *total_bytes += info.total_metadata_bytes;
+                        entries.push(MetadataEntry {
+                            category: "Embedded image metadata".to_string(),
+                            name: "Embedded data URI image".to_string(),
+                            value: format!(
+                                "{} metadata entries inside embedded {} image; removed during SVG cleaning",
+                                info.metadata_found.len(),
+                                info.file_type
+                            ),
+                        });
+                    }
+                    None => opaque_count += 1,
+                }
+            } else if is_css_reference_attr(local) && contains_data_uri_reference(&attr.value) {
+                opaque_count += 1;
+            }
+        }
         search = end;
     }
-    count
+
+    if opaque_count > 0 {
+        entries.push(MetadataEntry {
+            category: LIMITED_VERIFICATION_CATEGORY.to_string(),
+            name: "Embedded data URI content".to_string(),
+            value: format!(
+                "{opaque_count} data URI reference(s) preserved; the embedded content could not be verified or cleaned"
+            ),
+        });
+    }
+}
+
+// Rewrites url-attribute base64 data URIs whose payload is a supported raster
+// image with the recursively cleaned payload. Anything else (CSS references,
+// non-base64 payloads, nested SVG, unreadable content) is left untouched and
+// stays flagged as limited verification by extraction.
+fn clean_embedded_data_uri_images(text: &str) -> String {
+    let mut out = String::with_capacity(text.len());
+    let mut copy_pos = 0usize;
+    let mut search = 0usize;
+    while let Some(relative) = text[search..].find('<') {
+        let start = search + relative;
+        if matches!(text.as_bytes().get(start + 1), Some(b'?' | b'!' | b'/')) {
+            search = find_tag_end(text, start).unwrap_or(start + 1);
+            continue;
+        }
+        let Some((_, attrs_start, attrs_end, end, _, _)) = parse_tag(text, start) else {
+            search = start + 1;
+            continue;
+        };
+        for attr in parse_attrs(text, attrs_start, attrs_end) {
+            if !is_url_attr(local_name(&attr.name)) || !is_data_uri_value(&attr.value) {
+                continue;
+            }
+            let Some(cleaned) = cleaned_data_uri_value(&text[attr.value_start..attr.value_end])
+            else {
+                continue;
+            };
+            out.push_str(&text[copy_pos..attr.value_start]);
+            out.push_str(&cleaned);
+            copy_pos = attr.value_end;
+        }
+        search = end;
+    }
+    out.push_str(&text[copy_pos..]);
+    out
+}
+
+// Returns (header, payload bytes, detected type) when the raw attribute value
+// is a base64 data URI holding a raster image this build can clean and
+// re-encode byte-for-byte. The raw text must be entity-free so the re-encoded
+// value can be spliced back without escaping surprises.
+fn decoded_data_uri_raster(raw_value: &str) -> Option<(String, Vec<u8>, String)> {
+    if raw_value.contains('&') || raw_value.contains('<') {
+        return None;
+    }
+    let (header, payload) = raw_value.split_once(',')?;
+    let lower = header.to_ascii_lowercase();
+    if !lower.starts_with("data:") || !lower.ends_with(";base64") {
+        return None;
+    }
+    let bytes = base64_decode(payload)?;
+    let detected = crate::detect_file_type(&bytes);
+    is_cleanable_data_uri_image_type(&detected).then(|| (header.to_string(), bytes, detected))
+}
+
+fn verifiable_data_uri_info(raw_value: &str) -> Option<MetadataInfo> {
+    let (_, bytes, detected) = decoded_data_uri_raster(raw_value)?;
+    crate::validate_detected_file(&bytes, &detected).ok()?;
+    Some(crate::extract_detected_metadata(&bytes, &detected))
+}
+
+fn cleaned_data_uri_value(raw_value: &str) -> Option<String> {
+    let (header, bytes, _) = decoded_data_uri_raster(raw_value)?;
+    let cleaned = crate::remove_metadata_bytes(&bytes).ok()?;
+    (cleaned != bytes).then(|| format!("{header},{}", base64_encode(&cleaned)))
+}
+
+// Nested SVG payloads stay opaque so cleaning cannot recurse through
+// arbitrarily nested vector documents.
+fn is_cleanable_data_uri_image_type(file_type: &str) -> bool {
+    matches!(file_type, "jpeg" | "png" | "webp" | "gif" | "tiff")
 }
 
 fn strip_removable_attrs(text: &str) -> String {
@@ -567,14 +663,10 @@ fn is_removable_attr(attr: &Attr) -> bool {
         || contains_css_url_reference(&attr.value)
 }
 
-fn is_embedded_data_uri_attr(attr: &Attr) -> bool {
-    let local = local_name(&attr.name);
-    let is_url_attr = URL_ATTRS
+fn is_url_attr(local: &str) -> bool {
+    URL_ATTRS
         .iter()
-        .any(|name| local.eq_ignore_ascii_case(name));
-
-    (is_url_attr && is_data_uri_value(&attr.value))
-        || (is_css_reference_attr(local) && contains_data_uri_reference(&attr.value))
+        .any(|name| local.eq_ignore_ascii_case(name))
 }
 
 fn is_css_reference_attr(name: &str) -> bool {
@@ -609,10 +701,7 @@ fn is_event_handler_attr(name: &str) -> bool {
 
 fn is_external_reference_attr(attr: &Attr) -> bool {
     let local = local_name(&attr.name);
-    if URL_ATTRS
-        .iter()
-        .any(|name| local.eq_ignore_ascii_case(name))
-    {
+    if is_url_attr(local) {
         return is_external_reference_value(&attr.value);
     }
 
@@ -781,6 +870,8 @@ struct Attr {
     value: String,
     start: usize,
     end: usize,
+    value_start: usize,
+    value_end: usize,
 }
 
 fn parse_attrs(text: &str, from: usize, to: usize) -> Vec<Attr> {
@@ -813,6 +904,8 @@ fn parse_attrs(text: &str, from: usize, to: usize) -> Vec<Attr> {
                 value: String::new(),
                 start: attr_start,
                 end: pos,
+                value_start: pos,
+                value_end: pos,
             });
             continue;
         }
@@ -848,6 +941,8 @@ fn parse_attrs(text: &str, from: usize, to: usize) -> Vec<Attr> {
             value: decode_xml_entities(&text[value_start..value_end]),
             start: attr_start,
             end: pos,
+            value_start,
+            value_end,
         });
     }
     attrs
@@ -1174,6 +1269,75 @@ mod tests {
                 entry.category == LIMITED_VERIFICATION_CATEGORY
                     && entry.name == "Embedded data URI content"
             }));
+    }
+
+    #[test]
+    fn cleans_supported_raster_data_uri_images() {
+        let jpeg = [
+            0xff, 0xd8, 0xff, 0xfe, 0x00, 0x08, b's', b'e', b'c', b'r', b'e', b't', 0xff, 0xd9,
+        ];
+        let payload = base64_encode(&jpeg);
+        let svg = format!(
+            r#"<svg xmlns="http://www.w3.org/2000/svg"><image href="data:image/jpeg;base64,{payload}" width="10" height="10"/></svg>"#
+        );
+
+        let info = extract_metadata(svg.as_bytes());
+        assert!(info
+            .metadata_found
+            .iter()
+            .any(|entry| entry.category == "Embedded image metadata"));
+        assert!(!info
+            .metadata_found
+            .iter()
+            .any(|entry| entry.category == LIMITED_VERIFICATION_CATEGORY));
+
+        let cleaned = remove_metadata(svg.as_bytes()).unwrap();
+        let cleaned_text = std::str::from_utf8(&cleaned).unwrap();
+        assert!(cleaned_text.contains("data:image/jpeg;base64,"));
+        let cleaned_payload = cleaned_text
+            .split("base64,")
+            .nth(1)
+            .unwrap()
+            .split('"')
+            .next()
+            .unwrap();
+        let cleaned_bytes = base64_decode(cleaned_payload).unwrap();
+        assert!(!cleaned_bytes.windows(6).any(|w| w == b"secret"));
+        assert!(extract_metadata(&cleaned).metadata_found.is_empty());
+    }
+
+    #[test]
+    fn leaves_clean_raster_data_uri_unchanged_and_unflagged() {
+        let payload = base64_encode(&[0xff, 0xd8, 0xff, 0xd9]);
+        let svg = format!(
+            r#"<svg xmlns="http://www.w3.org/2000/svg"><image href="data:image/jpeg;base64,{payload}"/></svg>"#
+        );
+
+        assert!(extract_metadata(svg.as_bytes()).metadata_found.is_empty());
+        assert_eq!(remove_metadata(svg.as_bytes()).unwrap(), svg.as_bytes());
+    }
+
+    #[test]
+    fn nested_svg_data_uri_stays_flagged_for_review() {
+        let inner = base64_encode(
+            br#"<svg xmlns="http://www.w3.org/2000/svg"><title>inner secret</title></svg>"#,
+        );
+        let svg = format!(
+            r#"<svg xmlns="http://www.w3.org/2000/svg"><image href="data:image/svg+xml;base64,{inner}"/></svg>"#
+        );
+
+        let info = extract_metadata(svg.as_bytes());
+        assert!(info
+            .metadata_found
+            .iter()
+            .any(|entry| entry.category == LIMITED_VERIFICATION_CATEGORY));
+
+        let cleaned = remove_metadata(svg.as_bytes()).unwrap();
+        assert_eq!(cleaned, svg.as_bytes());
+        assert!(extract_metadata(&cleaned)
+            .metadata_found
+            .iter()
+            .any(|entry| entry.category == LIMITED_VERIFICATION_CATEGORY));
     }
 
     #[test]
