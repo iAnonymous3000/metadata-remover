@@ -64,6 +64,8 @@ npm test
 npm run dist
 ```
 
+Rust tests include a real-encoder fixture corpus (`wasm/tests/fixtures/real-device`). Set `METADATA_REMOVER_FIXTURE_DIR` to a local folder of your own files to run them through the same clean-and-verify pipeline without committing them.
+
 The GitHub Pages deployment cannot apply Cloudflare Pages or Netlify `_headers` rules. The hosted demo uses HTTPS from GitHub Pages, an in-document CSP for same-origin app resources, and a no-referrer meta policy. Header-only protections such as HSTS, `frame-ancestors`, COOP/COEP/CORP, `X-Content-Type-Options`, and Permissions-Policy require a host or proxy that can set HTTP response headers.
 
 ## Limitations

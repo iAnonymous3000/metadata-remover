@@ -1,0 +1,36 @@
+Real-encoder fixture corpus
+===========================
+
+Every file here was generated for this project with real production encoders,
+so the corpus is licensing-clean (no third-party media) while carrying the
+real container structures device files have. Each file embeds "Fixture ..."
+marker strings that tests/real_device.rs asserts are removed by cleaning.
+
+apple-imageio-gps.jpg / apple-imageio-gps.heic
+  Apple ImageIO (CGImageDestination) on macOS with TIFF/EXIF/GPS dictionaries:
+  Make=Apple, Model=iPhone 15 Pro, artist, lens, body serial number, capture
+  timestamps, and GPS coordinates. Same encoder code path as iPhone captures;
+  the HEIC stores EXIF and XMP as iloc items the way iPhone files do
+  (including the XMP infe with an empty item name).
+
+apple-quicktime-location.mov
+  ffmpeg/libx264 base clip re-exported through AVFoundation
+  (AVAssetExportSession, QuickTime muxer) with
+  com.apple.quicktime.location.ISO6709 and creation-date metadata items,
+  matching the moov/meta/ilst layout of iPhone videos.
+
+ffmpeg-location.mp4
+  ffmpeg/libx264 with title and encoder tags in moov/udta/meta/ilst.
+
+ffmpeg-lame-id3.mp3
+  ffmpeg/libmp3lame sine clip with ID3v2.3 title/artist/comment frames.
+
+Regenerating: any macOS with Xcode CLT + ffmpeg can rebuild equivalents
+(CGImageDestinationAddImage with kCGImagePropertyTIFF/Exif/GPS dictionaries;
+AVAssetExportSession passthrough with quickTimeMetadata items; ffmpeg
+-metadata flags). Keep files tiny and marker strings intact.
+
+Local-only corpus: point METADATA_REMOVER_FIXTURE_DIR at a folder of real
+personal files (e.g. iPhone photos/videos) and run `cargo test` to push them
+through the same detect -> validate -> clean -> re-validate pipeline without
+committing them.

@@ -27,13 +27,13 @@ pub fn detect_file_type(data: &[u8]) -> Option<&'static str> {
     if brands.iter().any(|brand| is_avif_brand(brand)) {
         Some("avif")
     } else if brands.iter().any(|brand| is_heif_brand(brand)) {
-        if brands
-            .iter()
-            .any(|brand| matches!(brand.as_slice(), b"mif1" | b"msf1"))
-        {
-            Some("heif")
-        } else {
+        // Real HEVC-coded files (iPhone captures) list an hei*/hev* brand
+        // alongside the generic mif1/msf1 structural brands, so the codec
+        // brand decides; only purely generic files are labeled heif.
+        if brands.iter().any(|brand| is_heic_codec_brand(brand)) {
             Some("heic")
+        } else {
+            Some("heif")
         }
     } else if brands.iter().any(|brand| brand.as_slice() == b"qt  ") {
         Some("mov")
@@ -558,13 +558,24 @@ fn parse_infe(data: &[u8], infe: &BoxInfo) -> Result<Option<HeifItem>, String> {
         return Ok(None);
     };
     let kind = read_kind(data, item_type_offset)?;
-    let strings = parse_null_strings(&data[item_type_offset + 4..infe.start + infe.size]);
+    // The infe strings are positional (item_name, then content_type for mime
+    // items); an empty item_name still occupies its slot, so empty segments
+    // must be preserved. Real Apple HEIC writes XMP as `\0application/rdf+xml`.
+    let mut strings = data[item_type_offset + 4..infe.start + infe.size].split(|byte| *byte == 0);
+    let name = null_string_part(strings.next());
+    let content_type = null_string_part(strings.next());
     Ok(Some(HeifItem {
         id,
         kind,
-        name: strings.first().cloned().unwrap_or_default(),
-        content_type: strings.get(1).cloned().unwrap_or_default(),
+        name,
+        content_type,
     }))
+}
+
+fn null_string_part(part: Option<&[u8]>) -> String {
+    part.and_then(|part| std::str::from_utf8(part).ok())
+        .unwrap_or_default()
+        .to_string()
 }
 
 fn parse_infe_id_and_type_offset(
@@ -593,14 +604,6 @@ fn parse_infe_id_and_type_offset(
         return Err("Invalid HEIF infe box".to_string());
     }
     Ok(Some((id, offset)))
-}
-
-fn parse_null_strings(data: &[u8]) -> Vec<String> {
-    data.split(|byte| *byte == 0)
-        .filter_map(|part| std::str::from_utf8(part).ok())
-        .filter(|part| !part.is_empty())
-        .map(str::to_string)
-        .collect()
 }
 
 fn is_heif_metadata_item(item: &HeifItem) -> bool {
@@ -640,18 +643,13 @@ fn ftyp_brands(data: &[u8], ftyp: &BoxInfo) -> Option<Vec<Vec<u8>>> {
 }
 
 fn is_heif_brand(brand: &[u8]) -> bool {
+    matches!(brand, b"mif1" | b"msf1") || is_heic_codec_brand(brand)
+}
+
+fn is_heic_codec_brand(brand: &[u8]) -> bool {
     matches!(
         brand,
-        b"mif1"
-            | b"msf1"
-            | b"heic"
-            | b"heix"
-            | b"hevc"
-            | b"hevx"
-            | b"heim"
-            | b"heis"
-            | b"hevm"
-            | b"hevs"
+        b"heic" | b"heix" | b"hevc" | b"hevx" | b"heim" | b"heis" | b"hevm" | b"hevs"
     )
 }
 
@@ -1186,6 +1184,63 @@ mod tests {
         assert!(!cleaned
             .windows(b"GPS_SECRET".len())
             .any(|w| w == b"GPS_SECRET"));
+        assert!(extract_metadata(&cleaned, "heic").metadata_found.is_empty());
+    }
+
+    #[test]
+    fn detects_and_zeroes_heif_xmp_mime_item_with_empty_item_name() {
+        // Mirrors real Apple ImageIO output: the XMP infe has an EMPTY
+        // item_name followed by the content type, so string slots are
+        // positional and must not be compacted.
+        let mut data = ftyp(b"heic");
+        let mut infe_payload = Vec::new();
+        infe_payload.extend_from_slice(&[2, 0, 0, 0]);
+        infe_payload.extend_from_slice(&1u16.to_be_bytes());
+        infe_payload.extend_from_slice(&0u16.to_be_bytes());
+        infe_payload.extend_from_slice(b"mime");
+        infe_payload.extend_from_slice(b"\0application/rdf+xml\0");
+        let infe = box_bytes(b"infe", &infe_payload);
+
+        let mut iinf_payload = Vec::new();
+        iinf_payload.extend_from_slice(&[0, 0, 0, 0]);
+        iinf_payload.extend_from_slice(&1u16.to_be_bytes());
+        iinf_payload.extend_from_slice(&infe);
+        let iinf = box_bytes(b"iinf", &iinf_payload);
+
+        let mut iloc_payload = Vec::new();
+        iloc_payload.extend_from_slice(&[0, 0, 0, 0]);
+        iloc_payload.push(0x44);
+        iloc_payload.push(0x40);
+        iloc_payload.extend_from_slice(&1u16.to_be_bytes());
+        iloc_payload.extend_from_slice(&1u16.to_be_bytes());
+        iloc_payload.extend_from_slice(&0u16.to_be_bytes());
+        iloc_payload.extend_from_slice(&0u32.to_be_bytes());
+        iloc_payload.extend_from_slice(&1u16.to_be_bytes());
+        let mdat_payload = b"<x:xmpmeta>dc:creator Secret Author</x:xmpmeta>";
+        let iloc_len = 8 + iloc_payload.len() + 8;
+        let meta_len = 8 + 4 + iinf.len() + iloc_len;
+        let mdat_offset = data.len() + meta_len + 8;
+        iloc_payload.extend_from_slice(&(mdat_offset as u32).to_be_bytes());
+        iloc_payload.extend_from_slice(&(mdat_payload.len() as u32).to_be_bytes());
+        let iloc = box_bytes(b"iloc", &iloc_payload);
+
+        let mut meta_payload = vec![0, 0, 0, 0];
+        meta_payload.extend_from_slice(&iinf);
+        meta_payload.extend_from_slice(&iloc);
+        data.extend_from_slice(&box_bytes(b"meta", &meta_payload));
+        data.extend_from_slice(&box_bytes(b"mdat", mdat_payload));
+
+        let info = extract_metadata(&data, "heic");
+        assert!(info
+            .metadata_found
+            .iter()
+            .any(|entry| entry.name == "XMP item"));
+        assert_eq!(info.total_metadata_bytes, mdat_payload.len());
+
+        let cleaned = remove_metadata(&data, "heic").unwrap();
+        assert!(!cleaned
+            .windows(b"Secret Author".len())
+            .any(|w| w == b"Secret Author"));
         assert!(extract_metadata(&cleaned, "heic").metadata_found.is_empty());
     }
 
