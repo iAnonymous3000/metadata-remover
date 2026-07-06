@@ -1,0 +1,6 @@
+# RUSTSEC-2026-0192 flags ttf-parser as unmaintained (warning-level; no
+# vulnerability). It is a required transitive dependency of lopdf, which is
+# tracked at its latest release. Remove this exception once lopdf drops or
+# replaces ttf-parser.
+[advisories]
+ignore = ["RUSTSEC-2026-0192"]

@@ -136,7 +136,7 @@ fn collect_object_metadata(
             collect_annotation_metadata(id, dict, entries, total_bytes);
         }
         Object::Stream(stream) => {
-            if stream.dict.type_is(b"Metadata") || object_subtype_is(&stream.dict, b"XML") {
+            if stream.dict.has_type(b"Metadata") || object_subtype_is(&stream.dict, b"XML") {
                 entries.push(MetadataEntry {
                     category: "XMP".to_string(),
                     name: format!("Metadata stream {} {}", id.0, id.1),
@@ -144,7 +144,7 @@ fn collect_object_metadata(
                 });
                 *total_bytes += stream.content.len();
             }
-            if stream.dict.type_is(b"EmbeddedFile") {
+            if stream.dict.has_type(b"EmbeddedFile") {
                 entries.push(MetadataEntry {
                     category: "Attachment".to_string(),
                     name: format!("Embedded file stream {} {}", id.0, id.1),
@@ -219,12 +219,12 @@ fn scrub_dictionary(dict: &mut Dictionary) {
 fn should_delete_object(obj: &Object) -> bool {
     match obj {
         Object::Dictionary(dict) => {
-            dict.type_is(b"Metadata")
-                || dict.type_is(b"Filespec")
-                || (dict.type_is(b"Annot") && object_subtype_is(dict, b"FileAttachment"))
+            dict.has_type(b"Metadata")
+                || dict.has_type(b"Filespec")
+                || (dict.has_type(b"Annot") && object_subtype_is(dict, b"FileAttachment"))
         }
         Object::Stream(stream) => {
-            stream.dict.type_is(b"Metadata") || stream.dict.type_is(b"EmbeddedFile")
+            stream.dict.has_type(b"Metadata") || stream.dict.has_type(b"EmbeddedFile")
         }
         _ => false,
     }
