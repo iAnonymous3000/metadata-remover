@@ -2,6 +2,7 @@ use serde::{Deserialize, Serialize};
 use wasm_bindgen::prelude::*;
 
 mod bmff;
+mod flac;
 mod gif;
 mod jpeg;
 mod mp3;
@@ -11,6 +12,7 @@ mod png;
 mod svg;
 mod tiff;
 mod util;
+mod wav;
 mod webp;
 
 // Magic bytes for file type detection
@@ -59,6 +61,10 @@ pub fn detect_file_type(data: &[u8]) -> String {
         && data[8..12] == WEBP_MAGIC
     {
         "webp".into()
+    } else if wav::is_wav(data) {
+        "wav".into()
+    } else if flac::looks_like_flac(data) {
+        "flac".into()
     } else if data.len() >= TIFF_LE_MAGIC.len()
         && (data[..TIFF_LE_MAGIC.len()] == TIFF_LE_MAGIC
             || data[..TIFF_BE_MAGIC.len()] == TIFF_BE_MAGIC)
@@ -95,6 +101,8 @@ fn extract_detected_metadata(data: &[u8], file_type: &str) -> MetadataInfo {
         "avif" | "heic" | "heif" | "mp4" | "mov" => bmff::extract_metadata(data, file_type),
         "docx" | "xlsx" | "pptx" | "odt" | "ods" | "odp" | "epub" => ooxml::extract_metadata(data),
         "mp3" => mp3::extract_metadata(data),
+        "flac" => flac::extract_metadata(data),
+        "wav" => wav::extract_metadata(data),
         "svg" => svg::extract_metadata(data),
         _ => MetadataInfo {
             file_type: file_type.to_string(),
@@ -126,6 +134,8 @@ fn validate_detected_file(data: &[u8], file_type: &str) -> Result<(), String> {
         "avif" | "heic" | "heif" | "mp4" | "mov" => bmff::validate(data, file_type),
         "docx" | "xlsx" | "pptx" | "odt" | "ods" | "odp" | "epub" => ooxml::validate(data),
         "mp3" => mp3::validate(data),
+        "flac" => flac::validate(data),
+        "wav" => wav::validate(data),
         "svg" => svg::validate(data),
         "office-legacy" => Err(legacy_office_error()),
         _ => Err("Unsupported file type".to_string()),
@@ -153,6 +163,8 @@ fn remove_detected_metadata(data: &[u8], file_type: &str) -> Result<Vec<u8>, Str
         "avif" | "heic" | "heif" | "mp4" | "mov" => bmff::remove_metadata(data, file_type),
         "docx" | "xlsx" | "pptx" | "odt" | "ods" | "odp" | "epub" => ooxml::remove_metadata(data),
         "mp3" => mp3::remove_metadata(data),
+        "flac" => flac::remove_metadata(data),
+        "wav" => wav::remove_metadata(data),
         "svg" => svg::remove_metadata(data),
         "office-legacy" => Err(legacy_office_error()),
         _ => Err("Unsupported file type".to_string()),

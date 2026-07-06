@@ -12,7 +12,7 @@ const LYRICS3_V2_FOOTER_SIZE: usize = 15;
 const LYRICS3_V1_MAX_BYTES: usize = 5100;
 
 #[derive(Clone, Copy, Debug)]
-struct Id3v2Header {
+pub(crate) struct Id3v2Header {
     version_major: u8,
     flags: u8,
     payload_size: usize,
@@ -20,10 +20,30 @@ struct Id3v2Header {
 }
 
 #[derive(Clone, Copy, Debug)]
-struct TailTag {
+pub(crate) struct TailTag {
     start: usize,
     size: usize,
     name: &'static str,
+}
+
+impl Id3v2Header {
+    pub(crate) fn total_size(&self) -> usize {
+        self.total_size
+    }
+}
+
+impl TailTag {
+    pub(crate) fn start(&self) -> usize {
+        self.start
+    }
+
+    pub(crate) fn size(&self) -> usize {
+        self.size
+    }
+
+    pub(crate) fn tag_name(&self) -> &'static str {
+        self.name
+    }
 }
 
 pub fn looks_like_mp3(data: &[u8]) -> bool {
@@ -100,7 +120,7 @@ pub fn validate(data: &[u8]) -> Result<(), String> {
     }
 }
 
-fn parse_id3v2_header(data: &[u8]) -> Option<Id3v2Header> {
+pub(crate) fn parse_id3v2_header(data: &[u8]) -> Option<Id3v2Header> {
     if data.len() < 10 || &data[0..3] != ID3V2_MAGIC {
         return None;
     }
@@ -189,7 +209,7 @@ fn audio_end_without_tail_metadata(data: &[u8]) -> usize {
         .unwrap_or(data.len())
 }
 
-fn tail_metadata_tags(data: &[u8]) -> Vec<TailTag> {
+pub(crate) fn tail_metadata_tags(data: &[u8]) -> Vec<TailTag> {
     let mut tags = Vec::new();
     let mut end = data.len();
 
@@ -325,7 +345,11 @@ fn ascii_decimal_to_usize(bytes: &[u8]) -> Option<usize> {
     })
 }
 
-fn collect_id3v2_frames(data: &[u8], header: Id3v2Header, entries: &mut Vec<MetadataEntry>) {
+pub(crate) fn collect_id3v2_frames(
+    data: &[u8],
+    header: Id3v2Header,
+    entries: &mut Vec<MetadataEntry>,
+) {
     let tag_start = 10;
     let tag_end = tag_start + header.payload_size;
     if tag_end > data.len() {
@@ -534,7 +558,7 @@ fn clean_id3_text(value: String) -> String {
         .join(" ")
 }
 
-fn collect_id3v1_fields(tag: &[u8], entries: &mut Vec<MetadataEntry>) {
+pub(crate) fn collect_id3v1_fields(tag: &[u8], entries: &mut Vec<MetadataEntry>) {
     for (name, range) in [
         ("Title", 3..33),
         ("Artist", 33..63),

@@ -2,7 +2,7 @@ import assert from 'node:assert/strict';
 import { readFile } from 'node:fs/promises';
 import { test } from 'node:test';
 
-const SUPPORTED_FORMATS = 'JPEG, PNG, WebP, AVIF, GIF, HEIC/HEIF, TIFF, SVG, MP4/MOV, MP3, PDF, DOCX, XLSX, PPTX, ODT, ODS, ODP, EPUB';
+const SUPPORTED_FORMATS = 'JPEG, PNG, WebP, AVIF, GIF, HEIC/HEIF, TIFF, SVG, MP4/MOV, MP3, FLAC, WAV, PDF, DOCX, XLSX, PPTX, ODT, ODS, ODP, EPUB';
 const README_FORMATS = [
     'JPEG',
     'PNG',
@@ -14,6 +14,8 @@ const README_FORMATS = [
     'SVG',
     'MP4/MOV',
     'MP3',
+    'FLAC',
+    'WAV',
     'PDF',
     'DOCX',
     'PPTX',
@@ -46,7 +48,7 @@ test('minimal docs keep parser limits visible without extra planning files', asy
     assert.match(readme, /individual files over 100 MB/);
     assert.match(readme, /AVIF, HEIC\/HEIF, and MP4\/MOV cleaning target known ISO-BMFF metadata structures/);
     assert.match(readme, /EPUB cleaning preserves required package fields/);
-    assert.match(readme, /MP3 support removes ID3v1\/ID3v2, APEv2, and Lyrics3 tags/);
+    assert.match(readme, /MP3, FLAC, and WAV are supported; OGG\/Opus is not supported yet/);
     assert.match(readme, /Embedded images inside Office, ODF, and EPUB packages are scanned and flagged/);
     assert.match(readme, /Visual verification is limited to browser-renderable JPEG, PNG, WebP, AVIF, GIF, and cleaned SVG previews/);
     assert.match(readme, /SVG active content and external references are removed/);

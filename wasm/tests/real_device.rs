@@ -48,6 +48,21 @@ const FIXTURES: &[(&str, &str, &[&str])] = &[
             "Fixture secret comment",
         ],
     ),
+    (
+        "ffmpeg-flac-tags.flac",
+        "flac",
+        &["Fixture Secret Title", "Fixture Secret Artist", "Lavf"],
+    ),
+    (
+        "ffmpeg-wav-info-bext.wav",
+        "wav",
+        &[
+            "Fixture Secret Title",
+            "Fixture Secret Artist",
+            "Fixture secret comment",
+            "Lavf",
+        ],
+    ),
 ];
 
 fn fixture_dir() -> PathBuf {

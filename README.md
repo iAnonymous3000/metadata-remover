@@ -19,6 +19,8 @@ Live demo: https://ianonymous3000.github.io/metadata-remover/
 - **SVG** - removes metadata elements, title/description text, XML comments, processing instructions, active content, event handlers, external references, and common editor namespace attributes
 - **MP4/MOV** - removes QuickTime/MP4 user-data, Content Credentials boxes, metadata boxes, and recording timestamps while preserving media tracks
 - **MP3** - removes ID3v1/ID3v2, APEv2, and Lyrics3 tags, including title/artist/album/comment frames, private frames, and embedded artwork, while preserving MPEG audio frames
+- **FLAC** - removes Vorbis comments, embedded artwork, application blocks, cue sheets, and prepended/appended ID3 and APE tags while preserving stream info, seek tables, and audio frames
+- **WAV** - removes LIST/INFO tags, Broadcast Wave bext, iXML/XMP, ID3 chunks, cue labels, and other non-audio chunks while preserving format and sample data
 - **PDF** - removes info dictionaries, XMP metadata streams, document IDs, app-specific metadata, and embedded file attachments
 - **DOCX** - removes package properties, comments, review authors, revision IDs, and tracked-change metadata
 - **PPTX** - removes package properties, comments, comment authors, threaded comments, and modern author parts
@@ -75,7 +77,7 @@ The GitHub Pages deployment cannot apply Cloudflare Pages or Netlify `_headers` 
 - BigTIFF is not supported; save or export as classic TIFF first.
 - AVIF, HEIC/HEIF, and MP4/MOV cleaning target known ISO-BMFF metadata structures this parser can identify.
 - EPUB cleaning preserves required package fields by normalizing identifiers and modified timestamps to neutral values.
-- MP3 support removes ID3v1/ID3v2, APEv2, and Lyrics3 tags. FLAC, OGG/Opus, and WAV are not supported yet.
+- MP3, FLAC, and WAV are supported; OGG/Opus is not supported yet. Encoder signatures embedded inside audio frames (such as LAME headers) are preserved.
 - Embedded images inside Office, ODF, and EPUB packages are scanned and flagged when supported image metadata is detected, but they are not recursively cleaned and keep the result in review.
 - Visual verification is limited to browser-renderable JPEG, PNG, WebP, AVIF, GIF, and cleaned SVG previews, and runs after cleaning when local memory headroom allows.
 - SVG active content and external references are removed, which can change interactive or externally styled SVGs.

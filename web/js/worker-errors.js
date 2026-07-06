@@ -70,6 +70,8 @@ function fileTypeLabel(fileType) {
         mp4: 'MP4',
         mov: 'MOV',
         mp3: 'MP3',
+        flac: 'FLAC',
+        wav: 'WAV',
         pdf: 'PDF',
         docx: 'DOCX',
         xlsx: 'XLSX',

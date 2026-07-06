@@ -1589,6 +1589,8 @@ function renderPreservedMetadataNote(fileType) {
         mp4: 'MP4 track and media payload boxes are kept; metadata and Content Credentials boxes are replaced with inert free-space boxes to preserve offsets.',
         mov: 'MOV track and media payload boxes are kept; metadata and Content Credentials boxes are replaced with inert free-space boxes to preserve offsets.',
         mp3: 'MP3 audio frames are kept; ID3v1/ID3v2, APEv2, and Lyrics3 tags, comments, private frames, and embedded artwork are removed.',
+        flac: 'FLAC audio frames, stream info, seek tables, and padding are kept; Vorbis comments, embedded artwork, application blocks, cue sheets, and ID3/APE tags are removed.',
+        wav: 'WAV format and sample data are kept; LIST/INFO tags, Broadcast Wave bext, iXML/XMP, ID3 chunks, cue labels, and other non-audio chunks are removed.',
         epub: 'EPUB book content, styles, images, and required package structure are kept; author/publisher/calibre metadata is removed, required identifiers/timestamps are normalized, and embedded images are kept in review because they are not recursively cleaned.',
         svg: 'SVG drawing elements are kept while metadata elements, title/description text, XML comments, processing instructions, active content, event handlers, external references, and editor namespace attributes are removed. Data URI content is preserved and kept in review when present.'
     };
@@ -1741,6 +1743,8 @@ const MIME_TYPES = {
     mp4: 'video/mp4',
     mov: 'video/quicktime',
     mp3: 'audio/mpeg',
+    flac: 'audio/flac',
+    wav: 'audio/wav',
     pdf: 'application/pdf',
     docx: 'application/vnd.openxmlformats-officedocument.wordprocessingml.document',
     xlsx: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',

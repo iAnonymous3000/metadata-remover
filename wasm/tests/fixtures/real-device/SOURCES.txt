@@ -25,6 +25,14 @@ ffmpeg-location.mp4
 ffmpeg-lame-id3.mp3
   ffmpeg/libmp3lame sine clip with ID3v2.3 title/artist/comment frames.
 
+ffmpeg-flac-tags.flac
+  ffmpeg/flac sine clip with Vorbis comments (title/artist + vendor string)
+  and an attached PICTURE block (PNG cover art).
+
+ffmpeg-wav-info-bext.wav
+  ffmpeg PCM sine clip with LIST/INFO tags (INAM/IART/ICMT/ISFT) and a
+  Broadcast Wave bext chunk (-write_bext 1).
+
 Regenerating: any macOS with Xcode CLT + ffmpeg can rebuild equivalents
 (CGImageDestinationAddImage with kCGImagePropertyTIFF/Exif/GPS dictionaries;
 AVAssetExportSession passthrough with quickTimeMetadata items; ffmpeg
