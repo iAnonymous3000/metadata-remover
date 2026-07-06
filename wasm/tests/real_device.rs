@@ -63,6 +63,21 @@ const FIXTURES: &[(&str, &str, &[&str])] = &[
             "Lavf",
         ],
     ),
+    (
+        "ffmpeg-vorbis-tags.ogg",
+        "ogg",
+        &["Fixture Secret Title", "Fixture Secret Artist", "Lavf"],
+    ),
+    (
+        "ffmpeg-opus-tags.opus",
+        "ogg",
+        &[
+            "Fixture Secret Title",
+            "Fixture Secret Artist",
+            "Lavf",
+            "libopus",
+        ],
+    ),
 ];
 
 fn fixture_dir() -> PathBuf {

@@ -6,6 +6,7 @@ mod flac;
 mod gif;
 mod jpeg;
 mod mp3;
+mod ogg;
 mod ooxml;
 mod pdf;
 mod png;
@@ -65,6 +66,8 @@ pub fn detect_file_type(data: &[u8]) -> String {
         "wav".into()
     } else if flac::looks_like_flac(data) {
         "flac".into()
+    } else if ogg::looks_like_ogg(data) {
+        "ogg".into()
     } else if data.len() >= TIFF_LE_MAGIC.len()
         && (data[..TIFF_LE_MAGIC.len()] == TIFF_LE_MAGIC
             || data[..TIFF_BE_MAGIC.len()] == TIFF_BE_MAGIC)
@@ -103,6 +106,7 @@ fn extract_detected_metadata(data: &[u8], file_type: &str) -> MetadataInfo {
         "mp3" => mp3::extract_metadata(data),
         "flac" => flac::extract_metadata(data),
         "wav" => wav::extract_metadata(data),
+        "ogg" => ogg::extract_metadata(data),
         "svg" => svg::extract_metadata(data),
         _ => MetadataInfo {
             file_type: file_type.to_string(),
@@ -136,6 +140,7 @@ fn validate_detected_file(data: &[u8], file_type: &str) -> Result<(), String> {
         "mp3" => mp3::validate(data),
         "flac" => flac::validate(data),
         "wav" => wav::validate(data),
+        "ogg" => ogg::validate(data),
         "svg" => svg::validate(data),
         "office-legacy" => Err(legacy_office_error()),
         _ => Err("Unsupported file type".to_string()),
@@ -165,6 +170,7 @@ fn remove_detected_metadata(data: &[u8], file_type: &str) -> Result<Vec<u8>, Str
         "mp3" => mp3::remove_metadata(data),
         "flac" => flac::remove_metadata(data),
         "wav" => wav::remove_metadata(data),
+        "ogg" => ogg::remove_metadata(data),
         "svg" => svg::remove_metadata(data),
         "office-legacy" => Err(legacy_office_error()),
         _ => Err("Unsupported file type".to_string()),

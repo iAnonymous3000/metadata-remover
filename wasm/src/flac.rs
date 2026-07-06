@@ -228,7 +228,7 @@ fn read_u32_be(data: &[u8], offset: usize) -> Option<usize> {
     Some(u32::from_be_bytes([bytes[0], bytes[1], bytes[2], bytes[3]]) as usize)
 }
 
-fn collect_vorbis_comments(payload: &[u8], entries: &mut Vec<MetadataEntry>) {
+pub(crate) fn collect_vorbis_comments(payload: &[u8], entries: &mut Vec<MetadataEntry>) {
     entries.push(MetadataEntry {
         category: "Audio metadata".to_string(),
         name: "Vorbis comments".to_string(),
@@ -265,7 +265,18 @@ fn collect_vorbis_comments(payload: &[u8], entries: &mut Vec<MetadataEntry>) {
         offset += length;
         let comment = String::from_utf8_lossy(comment);
         let (key, value) = comment.split_once('=').unwrap_or((comment.as_ref(), ""));
-        if !value.trim().is_empty() {
+        if value.trim().is_empty() {
+            continue;
+        }
+        if key.trim().eq_ignore_ascii_case("METADATA_BLOCK_PICTURE")
+            || key.trim().eq_ignore_ascii_case("COVERART")
+        {
+            entries.push(MetadataEntry {
+                category: "Embedded artwork".to_string(),
+                name: "Attached picture (Vorbis comment)".to_string(),
+                value: format!("{} bytes", value.len()),
+            });
+        } else {
             entries.push(MetadataEntry {
                 category: "Audio metadata".to_string(),
                 name: truncate_for_display(key.trim(), 60),

@@ -1591,6 +1591,7 @@ function renderPreservedMetadataNote(fileType) {
         mp3: 'MP3 audio frames are kept; ID3v1/ID3v2, APEv2, and Lyrics3 tags, comments, private frames, and embedded artwork are removed.',
         flac: 'FLAC audio frames, stream info, seek tables, and padding are kept; Vorbis comments, embedded artwork, application blocks, cue sheets, and ID3/APE tags are removed.',
         wav: 'WAV format and sample data are kept; LIST/INFO tags, Broadcast Wave bext, iXML/XMP, ID3 chunks, cue labels, and other non-audio chunks are removed.',
+        ogg: 'OGG audio packets and codec headers are kept; the Vorbis comment header (tags, vendor string, and embedded artwork comments) is replaced with an empty one and pages are renumbered.',
         epub: 'EPUB book content, styles, and required package structure are kept; author/publisher/calibre metadata is removed, required identifiers/timestamps are normalized, and supported embedded images are recursively cleaned. Unreadable embedded files stay in review.',
         svg: 'SVG drawing elements are kept while metadata elements, title/description text, XML comments, processing instructions, active content, event handlers, external references, and editor namespace attributes are removed. Base64 data URIs holding supported raster images are recursively cleaned; other data URI content is preserved and kept in review.'
     };
@@ -1745,6 +1746,7 @@ const MIME_TYPES = {
     mp3: 'audio/mpeg',
     flac: 'audio/flac',
     wav: 'audio/wav',
+    ogg: 'audio/ogg',
     pdf: 'application/pdf',
     docx: 'application/vnd.openxmlformats-officedocument.wordprocessingml.document',
     xlsx: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',

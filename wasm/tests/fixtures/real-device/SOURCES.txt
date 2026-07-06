@@ -33,6 +33,10 @@ ffmpeg-wav-info-bext.wav
   ffmpeg PCM sine clip with LIST/INFO tags (INAM/IART/ICMT/ISFT) and a
   Broadcast Wave bext chunk (-write_bext 1).
 
+ffmpeg-vorbis-tags.ogg / ffmpeg-opus-tags.opus
+  ffmpeg OGG Vorbis (native encoder) and Opus (libopus) sine clips with
+  title/artist Vorbis comments and encoder vendor strings.
+
 Regenerating: any macOS with Xcode CLT + ffmpeg can rebuild equivalents
 (CGImageDestinationAddImage with kCGImagePropertyTIFF/Exif/GPS dictionaries;
 AVAssetExportSession passthrough with quickTimeMetadata items; ffmpeg

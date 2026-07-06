@@ -72,6 +72,7 @@ function fileTypeLabel(fileType) {
         mp3: 'MP3',
         flac: 'FLAC',
         wav: 'WAV',
+        ogg: 'OGG',
         pdf: 'PDF',
         docx: 'DOCX',
         xlsx: 'XLSX',
